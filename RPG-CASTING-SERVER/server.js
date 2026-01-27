@@ -11,31 +11,26 @@ const app = express();
 const server = http.createServer(app);
 
 // ==========================
-// 1. CONFIGURAÇÕES
+// 1. CONFIGURAÇÕES (DINÂMICAS)
 // ==========================
+// O Render define a porta automaticamente. Em local, usa 3000.
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = 'jsonwebtoken_secret_key'; 
-const MONGODB_URI = "mongodb+srv://luizvale132_db_user:R04cTRkJ4GgOYdPb@cluster0.flnqilb.mongodb.net/project0?retryWrites=true&w=majority";
+const JWT_SECRET = process.env.JWT_SECRET || 'jsonwebtoken_secret_key'; 
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://luizvale132_db_user:R04cTRkJ4GgOYdPb@cluster0.flnqilb.mongodb.net/project0?retryWrites=true&w=majority";
 
 cloudinary.config({
-    cloud_name: "dmdkwgoi", 
-    api_key: "685964722873423",       
-    api_secret: "PDbMoEuEePM713_ZF2XMXxEZxIY"    
+    cloud_name: process.env.CLOUDINARY_NAME || "dmdkwgoi", 
+    api_key: process.env.CLOUDINARY_KEY || "685964722873423",       
+    api_secret: process.env.CLOUDINARY_SECRET || "PDbMoEuEePM713_ZF2XMXxEZxIY"    
 });
 
-// Ajuste no CORS para ser mais permissivo
-app.use(cors({ origin: "*" }));
+// Ajuste no CORS para aceitar conexões do App
+app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Middleware de log
-app.use((req, res, next) => {
-    console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
-    next();
-});
-
 // ==========================
-// 2. MODELS
+// 2. MODELS (MANTIDOS)
 // ==========================
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
     username: { type: String, required: true, unique: true },
@@ -51,7 +46,7 @@ const Room = mongoose.models.Room || mongoose.model('Room', new mongoose.Schema(
 const Character = mongoose.models.Character || mongoose.model('Character', new mongoose.Schema({
     name: String,
     img: String,
-    owner: { type: String, default: null }, // Guardará o ID como String
+    owner: { type: String, default: null },
     active: { type: Boolean, default: false },
     roomId: { type: String }
 }));
@@ -65,7 +60,7 @@ const Message = mongoose.models.Message || mongoose.model('Message', new mongoos
     roomId: String,
     roomCode: String,
     isRead: { type: Boolean, default: false },
-    deleted: { type: Boolean, default: false }, // Campo novo para suportar soft delete
+    deleted: { type: Boolean, default: false },
     replyTo: {
         text: String,
         senderName: String
@@ -74,43 +69,38 @@ const Message = mongoose.models.Message || mongoose.model('Message', new mongoos
 }));
 
 // ==========================
-// 3. SOCKET.IO
+// 3. SOCKET.IO (CONFIGURAÇÃO PARA NUVEM)
 // ==========================
 const io = new Server(server, { 
-    cors: { origin: "*" },
+    cors: {
+        origin: "*", // Permite conexões de qualquer lugar (necessário para o APK)
+        methods: ["GET", "POST"]
+    },
     pingTimeout: 30000,
 });
 
-// Middleware de Autenticação do Socket
 io.use(async (socket, next) => {
     try {
         const token = socket.handshake.auth?.token || socket.handshake.headers?.token;
         if (!token) {
-            // Guest logic (se necessário no futuro)
             socket.userId = "GUEST_" + Math.random().toString(36).substring(7);
             socket.username = "Jogador Web";
             return next();
         }
-        
         const decoded = jwt.verify(token, JWT_SECRET);
-        
-        // --- CORREÇÃO IMPORTANTE: ID SEMPRE STRING ---
         socket.userId = String(decoded.id); 
         socket.username = decoded.username; 
-        
         next();
     } catch (err) { next(); }
 });
 
 io.on("connection", (socket) => {
-    console.log(`🔌 Socket Conectado: ${socket.username} (ID: ${socket.userId})`);
+    console.log(`🔌 Conectado: ${socket.username}`);
 
-    // --- ENTRAR NA SALA ---
     socket.on("join_room", async (data) => {
         try {
             const cleanCode = data.roomCode ? data.roomCode.toUpperCase().trim() : null;
             if (!cleanCode) return;
-
             const room = await Room.findOne({ roomCode: cleanCode });
             if (!room) return;
             
@@ -118,7 +108,6 @@ io.on("connection", (socket) => {
             socket.currentRoomCode = cleanCode; 
             socket.currentRoomId = room._id.toString();
 
-            // Envia histórico e lista de personagens
             const chars = await Character.find({ roomId: socket.currentRoomId }).lean();
             const history = await Message.find({ roomCode: cleanCode })
                 .sort({ timestamp: -1 }).limit(50).lean();
@@ -130,18 +119,15 @@ io.on("connection", (socket) => {
                 roomId: socket.currentRoomId 
             });
             
-            // Inverte histórico para mostrar do antigo pro novo
             socket.emit("chat_history", history.reverse());
             io.to(cleanCode).emit("update_list", chars);
         } catch (e) { console.log("Erro no Join:", e) }
     });
 
-    // --- ENVIAR MENSAGEM ---
     socket.on("send_message", async (data) => {
         const rCode = socket.currentRoomCode;
         if (!rCode || !data.text) return;
         try {
-            // Busca se o usuário está usando um personagem ativo
             const activeChar = await Character.findOne({ 
                 owner: socket.userId, 
                 active: true, 
@@ -159,90 +145,67 @@ io.on("connection", (socket) => {
                 replyTo: data.replyTo,
                 isRead: false
             });
-            
             io.to(rCode).emit("receive_message", msg);
         } catch (e) { console.log("Erro msg:", e) }
     });
 
-    // --- LER MENSAGENS (Check duplo) ---
     socket.on("read_messages", async ({ roomCode, messageId }) => {
         try {
-            // Marca como lida
             await Message.findByIdAndUpdate(messageId, { isRead: true });
-            
-            // Avisa a todos na sala que essa mensagem foi lida
             io.to(roomCode).emit("messages_read", { lastReadMessageId: messageId });
         } catch (e) { console.log("Erro read:", e); }
     });
 
-    // --- DELETAR MENSAGEM ---
     socket.on("delete_message", async (messageId) => {
         try {
             const msg = await Message.findById(messageId);
-            if (!msg) return;
-
-            // Segurança: Só o dono pode apagar
-            if (String(msg.senderId) === String(socket.userId)) {
+            if (msg && String(msg.senderId) === String(socket.userId)) {
                 msg.text = "🚫 Mensagem apagada";
                 msg.deleted = true;
                 await msg.save();
-
                 io.to(socket.currentRoomCode).emit("message_deleted", messageId);
             }
         } catch (e) { console.log("Erro delete msg:", e); }
     });
 
-    // --- CRIAR PERSONAGEM ---
     socket.on("create_character", async (charData) => {
         try {
             if (!socket.currentRoomId) return;
-
-            const newChar = await Character.create({
+            await Character.create({
                 name: charData.name,
                 img: charData.img,
                 roomId: socket.currentRoomId,
                 active: false,
                 owner: null
             });
-
             const chars = await Character.find({ roomId: socket.currentRoomId });
             io.to(socket.currentRoomCode).emit("update_list", chars);
         } catch (e) { console.log("Erro create char:", e); }
     });
 
-    // --- ASSUMIR PERSONAGEM (CLAIM) ---
     socket.on("claim_character", async (charId) => {
         try {
-            // Solta outros personagens desse usuário nessa sala antes
             await Character.updateMany(
                 { owner: socket.userId, roomId: socket.currentRoomId }, 
                 { active: false }
             );
-
             await Character.findByIdAndUpdate(charId, {
                 owner: socket.userId,
                 active: true
             });
-
             const chars = await Character.find({ roomId: socket.currentRoomId });
             io.to(socket.currentRoomCode).emit("update_list", chars);
         } catch (e) { console.log("Erro claim:", e); }
     });
 
-    // --- SOLTAR PERSONAGEM (RELEASE) ---
     socket.on("release_character", async (charId) => {
         try {
-            await Character.findByIdAndUpdate(charId, {
-                owner: null,
-                active: false
-            });
-
+            await Character.findByIdAndUpdate(charId, { owner: null, active: false });
             const chars = await Character.find({ roomId: socket.currentRoomId });
             io.to(socket.currentRoomCode).emit("update_list", chars);
         } catch (e) { console.log("Erro release:", e); }
     });
 
-    // --- DELETAR PERSONAGEM ---
     socket.on("delete_character", async (charId) => {
         try {
             await Character.findByIdAndDelete(charId);
@@ -251,7 +214,6 @@ io.on("connection", (socket) => {
         } catch (e) { console.log("Erro delete char:", e); }
     });
 
-    // --- DIGITANDO... ---
     socket.on("typing", (data) => {
         socket.to(socket.currentRoomCode).emit("display_typing", data);
     });
@@ -260,35 +222,25 @@ io.on("connection", (socket) => {
         socket.to(socket.currentRoomCode).emit("hide_typing", data);
     });
 
-    socket.on("disconnect", () => console.log(`❌ Socket Desconectado: ${socket.username}`));
+    socket.on("disconnect", () => console.log(`❌ Desconectado`));
 });
 
 // ==========================
 // 4. APIs REST
 // ==========================
-
-app.get('/api/test', (req, res) => {
-    res.json({ status: "ok", message: "Servidor OK" });
-});
+app.get('/', (req, res) => res.send("RPG Server Online 🚀")); // Rota para o Render não dar erro de Health Check
 
 app.post('/api/rooms/create', async (req, res) => {
     try {
         const { roomName, ownerId } = req.body;
-        if (!roomName) return res.status(400).json({ message: "Nome da sala obrigatório." });
-
         const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        
         const newRoom = await Room.create({ 
             roomName, 
             roomCode, 
             ownerId: mongoose.Types.ObjectId.isValid(ownerId) ? ownerId : null 
         });
-        
         res.status(201).json(newRoom);
-    } catch (e) {
-        console.error("Erro criar sala:", e);
-        res.status(500).json({ message: "Erro interno." });
-    }
+    } catch (e) { res.status(500).json({ message: "Erro interno." }); }
 });
 
 app.post('/api/users/register', async (req, res) => {
@@ -307,28 +259,21 @@ app.post('/api/users/login', async (req, res) => {
         if (!user || !(await bcrypt.compare(password, user.password))) {
             return res.status(401).json({ message: "Credenciais inválidas" });
         }
-        
-        // --- CORREÇÃO: Enviar ID como String explícita ---
         const userIdStr = user._id.toString();
-        
         const token = jwt.sign({ id: userIdStr, username: user.username }, JWT_SECRET);
-        
-        res.json({ 
-            token, 
-            username: user.username, 
-            id: userIdStr // Evita envio de Objeto ObjectId
-        });
+        res.json({ token, username: user.username, id: userIdStr });
     } catch (e) { res.status(500).json({ message: "Erro no login" }); }
 });
 
 // ==========================
-// 5. INICIALIZAÇÃO
+// 5. INICIALIZAÇÃO (IMPORTANTE)
 // ==========================
 mongoose.connect(MONGODB_URI)
 .then(() => {
-    console.log("✅ Conectado ao MongoDB Atlas");
+    console.log("✅ MongoDB Atlas Conectado");
+    // Removido o IP fixo '192.168...' para funcionar na nuvem
     server.listen(PORT, '0.0.0.0', () => {
-        console.log(`🚀 Servidor rodando em: http://192.168.1.68:${PORT}`);
+        console.log(`🚀 Servidor rodando na porta ${PORT}`);
     });
 })
-.catch(err => console.error(err));
+.catch(err => console.error("Erro ao conectar no MongoDB:", err));

@@ -28,5 +28,18 @@
   "devDependencies": {
     "@babel/core": "^7.25.2"
   },
-  "private": true
+  "private": true,
+  "description": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lzz22-v/rpg-casting-app.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/lzz22-v/rpg-casting-app/issues"
+  },
+  "homepage": "https://github.com/lzz22-v/rpg-casting-app#readme"
 }
