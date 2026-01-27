@@ -1,15 +1,17 @@
-// App.js
-
 import React from 'react';
-import HomeScreen from "./src/screens/HomeScreen";
-// 🚨 Importe o Provider que você criou
+import { StatusBar } from 'expo-status-bar'; // Opcional, mas bom para Expo
 import { GameProvider } from './src/context/GameContext'; 
+import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
   return (
-    // 🚨 Envolvemos o HomeScreen no GameProvider para dar acesso ao estado global.
+    // 1. Envolvemos tudo no Provedor do Jogo para que o contexto (socket, user) funcione
     <GameProvider>
-      <HomeScreen />
+      {/* Controla a cor da barra de status do celular */}
+      <StatusBar style="light" />
+      
+      {/* 2. Carregamos o Navegador que decide se mostra Login ou o Jogo */}
+      <AppNavigator />
     </GameProvider>
   );
 }

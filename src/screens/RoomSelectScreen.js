@@ -1,298 +1,166 @@
-// src/screens/RoomSelectScreen.js
-
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { 
-    View, 
-    Text, 
-    TextInput, 
-    TouchableOpacity, 
-    StyleSheet, 
-    ActivityIndicator, 
-    ScrollView 
+    View, Text, TextInput, TouchableOpacity, StyleSheet, 
+    ActivityIndicator, ScrollView, Keyboard 
 } from 'react-native';
-import { useGame } from '../context/GameContext'; 
-import API_URL from '../utils/api'; 
+import { GameContext } from '../context/GameContext'; 
+import CustomAlert from '../components/CustomAlert'; // Importando seu novo componente
 
 export default function RoomSelectScreen() {
-    // Funções e estados do contexto
     const { 
-        user, // 🚨 ESSENCIAL: Contém o user._id que precisamos enviar
-        token, 
-        reqJoinRoomSocket, 
-        setPlayerId, 
-        disconnectSocket 
-    } = useGame(); 
+        user, logout, connectToRoom, BASE_URL, 
+        customAlert, showAlert, hideAlert 
+    } = useContext(GameContext); 
 
-    // Estados locais para a lógica da sala
     const [joinCode, setJoinCode] = useState('');
-    const [roomError, setRoomError] = useState('');
-    const [loading, setLoading] = useState(false);
-
+    const [localLoading, setLocalLoading] = useState(false);
     const [newRoomName, setNewRoomName] = useState('');
-    const [creationSuccess, setCreationSuccess] = useState('');
-    const [creationError, setCreationError] = useState('');
 
-    // --- Lógica de Criação de Sala (REST API) ---
     const reqCreateRoom = async () => {
-        if (!token) return;
-        setCreationError('');
-        setCreationSuccess('');
+        if (!user?.token) return showAlert('Erro', 'Sessão expirada.', 'error');
         
         const roomName = newRoomName.trim();
-        if (!roomName) return setCreationError('Dê um nome para a sala.');
+        if (!roomName) return showAlert('Aviso', 'Dê um nome para a sala.', 'info');
 
-        setLoading(true);
+        Keyboard.dismiss();
+        setLocalLoading(true);
         try {
-            // 🚨 CORREÇÃO 1: Adicionado o prefixo '/api' para bater com o backend
-            const response = await fetch(`${API_URL}/api/rooms/create`, {
+            const response = await fetch(`${BASE_URL}/api/rooms/create`, {
                 method: 'POST',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}` 
-                },
-                // 🚨 CORREÇÃO 2: Adicionado ownerId (user._id) no body, conforme seu backend
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ 
-                    roomName, 
-                    ownerId: user._id // O backend espera isso
+                    roomName,
+                    ownerId: user.id 
                 })
             });
 
             const data = await response.json();
-
+            
             if (!response.ok) {
                 throw new Error(data.message || 'Erro ao criar sala.');
             }
 
-            setCreationSuccess(`Sala criada! Código: ${data.roomCode}`);
+            showAlert("Sucesso", `Sala criada! Código: ${data.roomCode}. Clique no nome da sala para copiar o código.`, 'info');
             setNewRoomName('');
+            
+            connectToRoom(data.roomCode);
 
         } catch (err) {
-            setCreationError(err.message);
+            showAlert("Erro", err.message, 'error');
         } finally {
-            setLoading(false);
+            setLocalLoading(false);
         }
     };
 
+    const reqJoinRoom = () => {
+        const code = joinCode.trim().toUpperCase();
+        if (!code) return showAlert('Aviso', 'Insira um código.', 'info');
 
-    // --- Lógica de Entrar na Sala (SOCKET.IO) ---
-    const reqJoinRoom = (code) => {
-        setRoomError('');
-        // Pega o código do input ou de um parâmetro opcional (se for criação bem sucedida)
-        const roomCodeToJoin = (code || joinCode).trim().toUpperCase();
-        
-        if (!roomCodeToJoin) {
-            return setRoomError('Insira um código para entrar.');
-        }
-
-        // Antes de tentar reconectar, garante que qualquer socket anterior seja fechado
-        disconnectSocket();
-        
-        // Chama a função do Contexto que inicializa o Socket.io e navega
-        reqJoinRoomSocket(roomCodeToJoin);
+        Keyboard.dismiss();
+        connectToRoom(code); 
     };
 
-    // --- Lógica de Logout ---
     const handleLogout = () => {
-        // Limpa o estado no contexto e no AsyncStorage para deslogar
-        setPlayerId(null);
-        disconnectSocket();
+        // Como o Logout exige confirmação (Sim/Não), o Alert nativo ainda é útil.
+        // Mas para manter a estratégia, aqui chamamos o logout diretamente 
+        // ou podemos usar um showAlert customizado se você quiser adicionar botões extras depois.
+        logout();
     };
 
     return (
-        <ScrollView style={styles.fullScreenContainer} contentContainerStyle={styles.contentContainer}>
-            <View style={styles.logoutContainer}>
-                 <Text style={styles.welcomeText}>Bem-vindo, {user?.username || 'Viajante'}</Text>
-                 <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
-                     <Text style={styles.logoutButtonText}>Sair</Text>
-                 </TouchableOpacity>
-            </View>
-
-            {/* --- SEÇÃO DE ENTRAR EM SALA --- */}
-            <View style={styles.authBox}>
-                <Text style={styles.title}>Entrar em uma Sala</Text>
-                
-                {roomError ? <Text style={styles.errorMessage}>{roomError}</Text> : <View style={styles.errorMessagePlaceholder} />}
-
-                <TextInput
-                    style={styles.input}
-                    placeholder="Código da Sala (Ex: DEV001)"
-                    placeholderTextColor="#aaa"
-                    value={joinCode}
-                    onChangeText={setJoinCode}
-                    autoCapitalize="characters"
-                />
-                
-                <TouchableOpacity 
-                    style={styles.primaryButton} 
-                    onPress={() => reqJoinRoom()}
-                >
-                    <Text style={styles.buttonText}>Entrar</Text>
-                </TouchableOpacity>
-            </View>
-
-            <View style={styles.separator} />
-
-            {/* --- SEÇÃO DE CRIAR NOVA SALA --- */}
-            <View style={styles.authBox}>
-                <Text style={styles.title}>Criar Nova Sala</Text>
-                
-                {creationError ? <Text style={styles.errorMessage}>{creationError}</Text> : null}
-                {creationSuccess ? <Text style={styles.successMessage}>{creationSuccess}</Text> : null}
-
-                <TextInput
-                    style={styles.input}
-                    placeholder="Nome da Sala"
-                    placeholderTextColor="#aaa"
-                    value={newRoomName}
-                    onChangeText={setNewRoomName}
-                />
-                
-                <TouchableOpacity 
-                    style={styles.primaryButton} 
-                    onPress={reqCreateRoom}
-                    disabled={loading}
-                >
-                    {loading 
-                        ? <ActivityIndicator color="#fff" />
-                        : <Text style={styles.buttonText}>Criar Sala</Text>
-                    }
-                </TouchableOpacity>
-
-                {creationSuccess && (
-                    <TouchableOpacity 
-                        style={styles.secondaryButton} 
-                        // Simplifica a extração do código para ser mais robusto
-                        onPress={() => {
-                            const code = creationSuccess.split(': ')[1];
-                            if (code) reqJoinRoom(code);
-                        }} 
-                    >
-                        <Text style={styles.secondaryButtonText}>Entrar na Sala Criada</Text>
+        <View style={{ flex: 1 }}>
+            <ScrollView 
+                style={styles.fullScreenContainer} 
+                contentContainerStyle={styles.contentContainer}
+                keyboardShouldPersistTaps="handled"
+            >
+                <View style={styles.logoutContainer}>
+                    <View>
+                        <Text style={styles.welcomeLabel}>Bem-vindo,</Text>
+                        <Text style={styles.welcomeText}>{user?.username || 'Viajante'}</Text>
+                    </View>
+                    <TouchableOpacity onPress={handleLogout} style={styles.logoutButton}>
+                        <Text style={styles.logoutButtonText}>Sair</Text>
                     </TouchableOpacity>
-                )}
+                </View>
 
-            </View>
-        </ScrollView>
+                <View style={styles.authBox}>
+                    <Text style={styles.title}>Entrar em uma Sala</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Ex: AB12"
+                        placeholderTextColor="#666"
+                        value={joinCode}
+                        onChangeText={setJoinCode}
+                        autoCapitalize="characters"
+                        maxLength={6}
+                        editable={!localLoading}
+                    />
+                    <TouchableOpacity 
+                        style={styles.primaryButton} 
+                        onPress={reqJoinRoom}
+                        disabled={localLoading}
+                    >
+                        <Text style={styles.buttonText}>Entrar no Jogo</Text>
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.separatorContainer}>
+                    <View style={styles.line} />
+                    <Text style={styles.orText}>OU</Text>
+                    <View style={styles.line} />
+                </View>
+
+                <View style={styles.authBox}>
+                    <Text style={styles.title}>Criar Nova Sala</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Nome da Sala (Mundo)"
+                        placeholderTextColor="#666"
+                        value={newRoomName}
+                        onChangeText={setNewRoomName}
+                        editable={!localLoading}
+                    />
+                    <TouchableOpacity 
+                        style={[styles.primaryButton, { backgroundColor: '#4c32a8' }]} 
+                        onPress={reqCreateRoom} 
+                        disabled={localLoading}
+                    >
+                        {localLoading ? (
+                            <ActivityIndicator color="#fff" />
+                        ) : (
+                            <Text style={styles.buttonText}>Criar e Entrar</Text>
+                        )}
+                    </TouchableOpacity>
+                </View>
+            </ScrollView>
+
+            {/* O Alerta Customizado renderizado no final para sobrepor tudo */}
+            <CustomAlert 
+                visible={customAlert.visible}
+                title={customAlert.title}
+                message={customAlert.message}
+                type={customAlert.type}
+                onClose={hideAlert}
+            />
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    fullScreenContainer: {
-        flex: 1,
-        backgroundColor: '#1a1a1a', 
-    },
-    contentContainer: {
-        justifyContent: 'flex-start',
-        alignItems: 'center',
-        paddingVertical: 50,
-        paddingHorizontal: 20,
-    },
-    logoutContainer: {
-        width: '100%',
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 30,
-        maxWidth: 400,
-    },
-    welcomeText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    logoutButton: {
-        paddingVertical: 6,
-        paddingHorizontal: 12,
-        borderRadius: 5,
-        backgroundColor: '#cc0000', 
-    },
-    logoutButtonText: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 14,
-    },
-    authBox: {
-        backgroundColor: '#2d2d2d', 
-        padding: 30,
-        borderRadius: 15,
-        width: '100%',
-        maxWidth: 400,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 5 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10,
-        elevation: 8,
-        marginBottom: 20,
-    },
-    title: {
-        fontSize: 22,
-        color: '#7048e8', 
-        marginBottom: 20,
-        textAlign: 'center',
-        fontWeight: 'bold',
-    },
-    input: {
-        width: '100%',
-        padding: 12,
-        marginBottom: 15,
-        backgroundColor: '#111',
-        borderWidth: 1,
-        borderColor: '#444',
-        color: 'white',
-        borderRadius: 8,
-        fontSize: 16,
-    },
-    primaryButton: {
-        width: '100%',
-        padding: 12,
-        marginVertical: 5,
-        borderRadius: 8,
-        backgroundColor: '#7048e8', 
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    secondaryButton: {
-        width: '100%',
-        padding: 12,
-        marginVertical: 10,
-        borderRadius: 8,
-        backgroundColor: '#4d4d4d', 
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    buttonText: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 16,
-    },
-    secondaryButtonText: {
-        color: 'white',
-        fontWeight: 'bold',
-        fontSize: 16,
-    },
-    errorMessage: {
-        color: '#e74c3c', 
-        marginBottom: 15,
-        fontSize: 14,
-        minHeight: 20,
-        textAlign: 'center',
-    },
-    successMessage: {
-        color: '#2ecc71', 
-        marginBottom: 15,
-        fontSize: 14,
-        minHeight: 20,
-        textAlign: 'center',
-    },
-    errorMessagePlaceholder: {
-        minHeight: 20,
-        marginBottom: 15,
-    },
-    separator: {
-        width: '90%',
-        maxWidth: 400,
-        height: 1,
-        backgroundColor: '#444',
-        marginVertical: 20,
-    }
+    fullScreenContainer: { flex: 1, backgroundColor: '#0f0f0f' },
+    contentContainer: { alignItems: 'center', paddingVertical: 60, paddingHorizontal: 25 },
+    logoutContainer: { width: '100%', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 40, alignItems: 'center' },
+    welcomeLabel: { color: '#888', fontSize: 14 },
+    welcomeText: { color: 'white', fontSize: 22, fontWeight: 'bold' },
+    logoutButton: { paddingVertical: 8, paddingHorizontal: 15, borderRadius: 10, backgroundColor: '#331111', borderWidth: 1, borderColor: '#552222' },
+    logoutButtonText: { color: '#ff4444', fontWeight: 'bold', fontSize: 14 },
+    authBox: { backgroundColor: '#161616', padding: 25, borderRadius: 25, width: '100%', borderWidth: 1, borderColor: '#222' },
+    title: { fontSize: 18, color: '#fff', marginBottom: 20, textAlign: 'center', fontWeight: 'bold' },
+    input: { backgroundColor: '#000', color: 'white', padding: 18, borderRadius: 15, marginBottom: 15, borderWidth: 1, borderColor: '#333', fontSize: 16, textAlign: 'center' },
+    primaryButton: { backgroundColor: '#7048e8', padding: 18, borderRadius: 15, alignItems: 'center', elevation: 5 },
+    buttonText: { color: 'white', fontWeight: 'bold', fontSize: 16, letterSpacing: 1 },
+    separatorContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 35, width: '100%' },
+    line: { flex: 1, height: 1, backgroundColor: '#333' },
+    orText: { color: '#555', marginHorizontal: 15, fontWeight: 'bold' }
 });

@@ -1,55 +1,40 @@
 // src/screens/HomeScreen.js
 
-import React from 'react';
-import { View, ActivityIndicator, StyleSheet, Text } from 'react-native';
-import { useGame } from '../context/GameContext'; 
-
-// Importe todas as telas que este componente pode renderizar
-import LoginScreen from './LoginScreen';
-import RoomSelectScreen from './RoomSelectScreen';
-import GameScreen from './GameScreen'; 
-
-// Componente simples de Loading
-const LoadingScreen = () => (
-    <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#7048e8" />
-        <Text style={styles.loadingText}>Carregando estado inicial...</Text>
-    </View>
-);
+import React, { useEffect } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { useGame } from '../context/GameContext';
 
 export default function HomeScreen() {
-    const { token, roomCode, isLoading } = useGame();
+    const { user, isLoading } = useGame();
+    const navigation = useNavigation();
 
-    if (isLoading) {
-        return <LoadingScreen />;
-    }
+    useEffect(() => {
+        if (!isLoading) {
+            // Navega após o carregamento inicial dos dados (token/user)
+            if (user) {
+                // Usuário logado: vai para a seleção de sala
+                navigation.replace('RoomSelectScreen');
+            } else {
+                // Usuário deslogado: vai para o login
+                navigation.replace('Login'); // Assegure-se que você tem a tela 'Login'
+            }
+        }
+    }, [isLoading, user, navigation]);
 
-    // Prioridade 1: Se estiver logado E com código de sala -> TELA DE JOGO
-    if (token && roomCode) {
-        console.log("Navegando para: GameScreen");
-        return <GameScreen />; 
-    }
-    
-    // Prioridade 2: Se estiver logado, mas SEM código de sala -> SELEÇÃO DE SALA
-    if (token) {
-        console.log("Navegando para: RoomSelectScreen");
-        return <RoomSelectScreen />;
-    }
-    
-    // Padrão: Se não estiver logado -> TELA DE LOGIN
-    console.log("Navegando para: LoginScreen");
-    return <LoginScreen />;
+    // Exibe um loading enquanto os dados do Async Storage são carregados
+    return (
+        <View style={styles.container}>
+            <ActivityIndicator size="large" color="#7048e8" />
+        </View>
+    );
 }
 
 const styles = StyleSheet.create({
-    loadingContainer: {
+    container: {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#1a1a1a', 
+        backgroundColor: '#1a1a1a',
     },
-    loadingText: {
-        color: '#fff',
-        marginTop: 10
-    }
 });
