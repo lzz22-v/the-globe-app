@@ -2,14 +2,12 @@ import React, { createContext, useState, useEffect, useRef } from 'react';
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import API_URL from '../utils/api'; // <--- IMPORTANTE: Importando sua nova URL
 
 export const GameContext = createContext();
 
-const PORT = '3000';
-const PC_IP = '192.168.1.68'; 
-const BASE_URL = Platform.OS === 'android' && !Platform.isPad && PC_IP === 'localhost' 
-    ? `http://10.0.2.2:${PORT}` 
-    : `http://${PC_IP}:${PORT}`;
+// Substituímos toda aquela lógica de IP fixo por uma única constante
+const BASE_URL = API_URL; 
 
 export const GameProvider = ({ children }) => {
     const [user, setUser] = useState(null);

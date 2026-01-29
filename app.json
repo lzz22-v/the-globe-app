@@ -1,14 +1,13 @@
 {
   "expo": {
-    "name": "rpg-casting-app",
+    "name": "theGlobe",
     "slug": "rpg-casting-app",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/globe-logo.png",
     "userInterfaceStyle": "dark",
-   
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/globe-logo.png",
       "resizeMode": "contain",
       "backgroundColor": "#121212"
     },
@@ -17,12 +16,18 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
+        "foregroundImage": "./assets/globe-logo.png",
         "backgroundColor": "#121212"
-      }
+      },
+      "package": "com.lzz22.theglobe"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/globe-logo.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6f65bda1-7e10-4ea7-b8de-699615ef4165"
+      }
     }
   }
 }
