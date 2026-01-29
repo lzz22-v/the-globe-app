@@ -39,35 +39,6 @@ A versão mais recente do aplicativo está disponível para Android.
 
 ---
 
-## 🔧 Configuração para Desenvolvedores
-
-Se quiser rodar o projeto localmente:
-
-1. Clone o repositório:
-   ```bash
-   git clone [https://github.com/lzz22-v/the-globe-app.git](https://github.com/lzz22-v/the-globe-app.git)
-
-2. Instale as dependências:
-
-```bash
-npm install
-
-3. Inicie o Expo Go:
-
-```bash
-npx expo start
-
-
-
-Com certeza! Aqui está o conteúdo completo e formatado para o seu README.md. Ele já inclui o nome theGlobe, as tecnologias que usamos e os espaços para você colar os links do seu perfil e do APK.
-
-Como usar:
-Crie o arquivo README.md na raiz do projeto.
-
-Cole o conteúdo abaixo.
-
-Ajuste os links que estão entre parênteses ( ).
-
 Markdown
 # 🌍 theGlobe - RPG Multiplayer Casting App
 
@@ -117,14 +88,15 @@ Se quiser rodar o projeto localmente:
 1. Clone o repositório:
    ```bash
    git clone [https://github.com/lzz22-v/the-globe-app.git](https://github.com/lzz22-v/the-globe-app.git)
-Instale as dependências:
+2. Instale as dependências:
 
-Bash
-npm install
-Inicie o Expo Go:
+    ```bash
+    npm install
 
-Bash
-npx expo start
+3. Inicie o Expo Go:
+
+    ```bash
+    npx expo start
 
 ---
 
