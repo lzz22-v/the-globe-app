@@ -2,9 +2,11 @@ import React, { useState, useRef, useContext, useEffect } from 'react';
 import { 
     View, Text, FlatList, StyleSheet, 
     TextInput, TouchableOpacity, KeyboardAvoidingView, 
-    Platform, Image, StatusBar, Vibration,
+    Platform, StatusBar, Vibration,
     ToastAndroid, BackHandler, Modal
 } from 'react-native';
+// Utilizando expo-image para melhor performance de cache e renderização
+import { Image } from 'expo-image'; 
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker'; 
 import { GameContext } from '../context/GameContext'; 
@@ -13,7 +15,6 @@ import CreateCharacterModal from '../components/CreateCharacterModal';
 import MessageOptionsModal from '../components/MessageOptionsModal'; 
 import CustomAlert from '../components/CustomAlert';
 
-// Importação novos ícones SVG (Adicionado BlockIcon)
 import { CameraIcon, EpisodeIcon, BlockIcon } from '../components/AppIcons';
 
 export default function GameScreen({ navigation }) {
@@ -48,13 +49,16 @@ export default function GameScreen({ navigation }) {
     const inputRef = useRef(null);
 
     const currentUserId = String(user?.id || user?._id || '').trim();
+    const PLACEHOLDER_IMG = 'https://via.placeholder.com/150/1a1a1a/7048e8?text=RPG';
 
+    // Ciclo de vida: Ativa/Desativa chat e monitora sala
     useEffect(() => {
         setIsChatActive(true);
         if (!room) navigation.replace('RoomSelect');
         return () => setIsChatActive(false);
     }, [room]);
 
+    // Hardware Back Handler
     useEffect(() => {
         const backAction = () => {
             navigation.navigate('RoomSelect');
@@ -64,6 +68,7 @@ export default function GameScreen({ navigation }) {
         return () => backHandler.remove();
     }, []);
 
+    // Marcação de leitura automática
     useEffect(() => {
         if (messages.length > 0) {
             const lastMsg = messages[messages.length - 1];
@@ -78,17 +83,19 @@ export default function GameScreen({ navigation }) {
         try {
             const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!permission.granted) {
-                alert("Precisamos de permissão para acessar a galeria.");
+                showAlert("Permissão", "Precisamos de acesso à galeria.", "info");
                 return;
             }
             const result = await ImagePicker.launchImageLibraryAsync({
                 mediaTypes: ['images'],
                 allowsEditing: true,
                 aspect: [1, 1],
-                quality: 0.7,
+                quality: 0.5,
+                base64: true 
             });
             if (!result.canceled && result.assets?.length > 0) {
-                setEditImg(result.assets[0].uri);
+                const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
+                setEditImg(base64);
             }
         } catch (error) {
             console.log("Erro ao abrir galeria:", error);
@@ -163,7 +170,7 @@ export default function GameScreen({ navigation }) {
         });
         setEditModalVisible(false);
         setCharToEdit(null);
-        if (Platform.OS === 'android') ToastAndroid.show("Personagem atualizado!", ToastAndroid.SHORT);
+        if (Platform.OS === 'android') ToastAndroid.show("Atualizando personagem...", ToastAndroid.SHORT);
     };
 
     const handleLongPressMessage = (item) => {
@@ -213,8 +220,11 @@ export default function GameScreen({ navigation }) {
                 activeOpacity={0.7}
             >
                 <Image 
-                    source={{ uri: item.img || 'https://via.placeholder.com/100' }} 
+                    source={item.img || PLACEHOLDER_IMG} 
                     style={[styles.charAvatar, imageStyle]} 
+                    contentFit="cover"
+                    transition={300}
+                    cachePolicy="disk"
                 />
                 <Text style={[styles.charName, textStyle]} numberOfLines={1}>
                     {item.name}
@@ -259,7 +269,13 @@ export default function GameScreen({ navigation }) {
         return (
             <View style={[styles.messageRow, isMyMessage ? { flexDirection: 'row-reverse' } : { flexDirection: 'row' }]}>
                 {hasChar ? (
-                    <Image source={{ uri: item.characterImg }} style={styles.msgCharAvatar} />
+                    <Image 
+                        source={item.characterImg} 
+                        style={styles.msgCharAvatar}
+                        contentFit="cover"
+                        transition={200}
+                        cachePolicy="disk"
+                    />
                 ) : (
                     <View style={styles.msgNoCharSpacer} />
                 )}
@@ -390,6 +406,7 @@ export default function GameScreen({ navigation }) {
                 </View>
             </KeyboardAvoidingView>
 
+            {/* Modais de Interface */}
             <Modal visible={epModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.editModalBox}>
@@ -427,8 +444,10 @@ export default function GameScreen({ navigation }) {
                         <Text style={styles.editModalTitle}>Editar Personagem</Text>
                         <TouchableOpacity style={styles.imagePickerWrapper} onPress={handlePickImage}>
                             <Image 
-                                source={{ uri: editImg || 'https://via.placeholder.com/100' }} 
-                                style={styles.editAvatarPreview} 
+                                source={editImg || PLACEHOLDER_IMG} 
+                                style={styles.editAvatarPreview}
+                                contentFit="cover"
+                                cachePolicy="none"
                             />
                             <View style={styles.editIconBadge}>
                                 <CameraIcon size={16} color="#fff" />
@@ -514,7 +533,7 @@ const styles = StyleSheet.create({
     addBtnText: { color: '#fff', fontWeight: 'bold' },
     listContainer: { height: 140, backgroundColor: '#0f0f0f' },
     charCard: { width: 95, height: 115, marginRight: 12, alignItems: 'center', justifyContent: 'center', borderRadius: 18, borderWidth: 3, position: 'relative' },
-    charAvatar: { width: 65, height: 65, borderRadius: 32.5, marginBottom: 8 },
+    charAvatar: { width: 65, height: 65, borderRadius: 32.5, marginBottom: 8, backgroundColor: '#222' },
     charName: { fontSize: 12, fontWeight: '700', textAlign: 'center', paddingHorizontal: 4 },
     cardFree: { borderColor: '#333', backgroundColor: '#1a1a1a' }, 
     cardMineActive: { borderColor: '#00FF00', backgroundColor: 'rgba(0, 255, 0, 0.15)', borderWidth: 4 }, 
@@ -565,7 +584,7 @@ const styles = StyleSheet.create({
     editModalBox: { width: '85%', backgroundColor: '#1a1a1a', borderRadius: 25, padding: 25, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
     editModalTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
     imagePickerWrapper: { position: 'relative', marginBottom: 25 },
-    editAvatarPreview: { width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: '#7048e8' },
+    editAvatarPreview: { width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: '#7048e8', backgroundColor: '#222' },
     editIconBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#7048e8', width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#1a1a1a' },
     inputLabel: { color: '#7048e8', fontSize: 12, fontWeight: 'bold', marginBottom: 5, textTransform: 'uppercase', alignSelf: 'flex-start' },
     editInput: { width: '100%', backgroundColor: '#000', color: '#fff', borderRadius: 12, padding: 12, marginBottom: 20, fontSize: 16, borderWidth: 1, borderColor: '#222' },

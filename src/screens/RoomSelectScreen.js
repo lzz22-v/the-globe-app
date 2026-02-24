@@ -1,4 +1,4 @@
-import React, { useState, useContext, useCallback, useEffect } from 'react';
+import React, { useState, useContext, useCallback } from 'react';
 import { 
     View, Text, TextInput, TouchableOpacity, StyleSheet, 
     ActivityIndicator, ScrollView, Keyboard, 
@@ -18,61 +18,61 @@ export default function RoomSelectScreen() {
 
     const [joinCode, setJoinCode] = useState('');
     const [localLoading, setLocalLoading] = useState(false);
+    const [loadingType, setLoadingType] = useState(null); // 'join', 'create' ou 'resume'
     const [newRoomName, setNewRoomName] = useState('');
     const [history, setHistory] = useState([]);
 
-    // 1. Monitor de estado - Log para depuração
-    useEffect(() => {
-        if (room) {
-            console.log(`[RoomSelect] Sala ativa disponível: ${room.name || room.roomName}`);
-        }
-    }, [room]);
+    const activeCode = room?.code || room?.roomCode;
 
-    const loadHistory = async () => {
-        try {
-            const savedHistory = await AsyncStorage.getItem('@room_history');
-            if (savedHistory) {
-                setHistory(JSON.parse(savedHistory));
-            }
-        } catch (error) {
-            console.error("[RoomSelect] Erro ao carregar histórico", error);
-        }
-    };
-
+    // Carregar histórico ao focar na tela
     useFocusEffect(
         useCallback(() => {
+            const loadHistory = async () => {
+                try {
+                    const saved = await AsyncStorage.getItem('@room_history');
+                    if (saved) setHistory(JSON.parse(saved));
+                } catch (e) { console.error("Erro histórico:", e); }
+            };
             loadHistory();
         }, [])
     );
 
-    // 2. Função Unificada para Conectar e Navegar
-    const handleConnectAndNavigate = async (code) => {
+    // Função Unificada com bloqueio de reentrância
+    const handleConnectAndNavigate = async (code, type) => {
+        if (localLoading) return;
+
         const upperCode = code.trim().toUpperCase();
+        
+        // Se já estamos conectados nesta sala, apenas navegamos
+        if (activeCode === upperCode) {
+            return navigation.navigate('Game');
+        }
+
         setLocalLoading(true);
+        setLoadingType(type);
         Vibration.vibrate(50);
         
         try {
-            // Garante a conexão do socket antes de mudar de tela
             await connectToRoom(upperCode);
             navigation.navigate('Game');
         } catch (err) {
-            showAlert("Conexão Falhou", err.message || "Não foi possível conectar à sala.", "error");
+            showAlert("Conexão Falhou", err.message || "Não foi possível conectar.", "error");
         } finally {
             setLocalLoading(false);
+            setLoadingType(null);
         }
     };
 
     const reqCreateRoom = async () => {
-        const currentUserId = user?.id || user?._id;
-        if (!user?.token || !currentUserId) {
-            return showAlert('Erro', 'Sessão inválida. Faça login novamente.', 'error');
-        }
+        const userId = user?.id;
+        if (!user?.token || !userId) return showAlert('Erro', 'Sessão expirada.', 'error');
         
         const roomName = newRoomName.trim();
         if (!roomName) return showAlert('Aviso', 'Dê um nome para a sala.', 'info');
 
         Keyboard.dismiss();
         setLocalLoading(true);
+        setLoadingType('create');
 
         try {
             const response = await fetch(`${BASE_URL}/api/rooms/create`, {
@@ -81,47 +81,40 @@ export default function RoomSelectScreen() {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${user.token}`
                 },
-                body: JSON.stringify({ 
-                    roomName, 
-                    ownerId: String(currentUserId).trim() 
-                })
+                body: JSON.stringify({ roomName, ownerId: userId })
             });
 
             const data = await response.json();
             if (!response.ok) throw new Error(data.message || 'Erro ao criar sala.');
 
             setNewRoomName('');
-            await handleConnectAndNavigate(data.roomCode);
+            await handleConnectAndNavigate(data.roomCode, 'create');
         } catch (err) {
             showAlert("Erro", err.message, 'error');
             setLocalLoading(false);
+            setLoadingType(null);
         }
     };
 
-    const reqJoinRoom = async () => {
+    const reqJoinRoom = () => {
         const code = joinCode.trim().toUpperCase();
         if (!code) return showAlert('Aviso', 'Insira um código.', 'info');
-        
         Keyboard.dismiss();
         setJoinCode('');
-        await handleConnectAndNavigate(code);
+        handleConnectAndNavigate(code, 'join');
     };
-
-    // Lógica para verificar se existe uma sala ativa preservada no contexto
-    const activeCode = room?.code || room?.roomCode;
 
     return (
         <KeyboardAvoidingView 
-            style={{ flex: 1, backgroundColor: '#0a0a0a' }} 
+            style={styles.fullScreenContainer} 
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
             <StatusBar barStyle="light-content" />
             <ScrollView 
-                style={styles.fullScreenContainer} 
                 contentContainerStyle={styles.contentContainer}
                 keyboardShouldPersistTaps="handled"
             >
-                {/* Cabeçalho */}
+                {/* Header */}
                 <View style={styles.headerRow}>
                     <View>
                         <Text style={styles.welcomeLabel}>Bem-vindo,</Text>
@@ -132,34 +125,34 @@ export default function RoomSelectScreen() {
                     </TouchableOpacity>
                 </View>
 
-                {/* CARD DE SESSÃO ATIVA - Só aparece se 'room' estiver no Contexto */}
-                {activeCode ? (
+                {/* Card de Sessão Ativa */}
+                {activeCode && (
                     <View style={styles.activeRoomCard}>
                         <View style={styles.activeRoomInfo}>
                             <View style={styles.pulseDot} />
                             <View style={{ flex: 1 }}>
                                 <Text style={styles.activeRoomLabel}>Sessão em segundo plano</Text>
-                                <Text style={styles.roomHighlight}>
+                                <Text style={styles.roomHighlight} numberOfLines={1}>
                                     {room.name || room.roomName} 
-                                    <Text style={{ color: '#7048e8', fontSize: 14 }}> ({activeCode})</Text>
+                                    <Text style={styles.activeCodeMini}> ({activeCode})</Text>
                                 </Text>
                             </View>
                         </View>
                         <TouchableOpacity 
                             style={styles.resumeButton} 
-                            onPress={() => handleConnectAndNavigate(activeCode)}
+                            onPress={() => handleConnectAndNavigate(activeCode, 'resume')}
                             disabled={localLoading}
                         >
-                            {localLoading ? (
+                            {loadingType === 'resume' ? (
                                 <ActivityIndicator color="#fff" />
                             ) : (
                                 <Text style={styles.resumeButtonText}>VOLTAR PARA O JOGO</Text>
                             )}
                         </TouchableOpacity>
                     </View>
-                ) : null}
+                )}
 
-                {/* Bloco: Entrar em Sala */}
+                {/* Entrar em Sala */}
                 <View style={styles.authBox}>
                     <Text style={styles.boxTitle}>Entrar em uma Sala</Text>
                     <TextInput
@@ -177,14 +170,14 @@ export default function RoomSelectScreen() {
                         onPress={reqJoinRoom}
                         disabled={localLoading}
                     >
-                        {localLoading && !activeCode ? (
+                        {loadingType === 'join' ? (
                             <ActivityIndicator color="#fff" />
                         ) : (
                             <Text style={styles.buttonText}>Confirmar Código</Text>
                         )}
                     </TouchableOpacity>
 
-                    {/* Histórico Recente */}
+                    {/* Histórico */}
                     {history.length > 0 && (
                         <View style={styles.historyContainer}>
                             <Text style={styles.historyTitle}>Salas Recentes</Text>
@@ -196,7 +189,7 @@ export default function RoomSelectScreen() {
                                             styles.historyItem, 
                                             activeCode === item.code && styles.historyItemActive
                                         ]}
-                                        onPress={() => handleConnectAndNavigate(item.code)}
+                                        onPress={() => handleConnectAndNavigate(item.code, 'join')}
                                         disabled={localLoading}
                                     >
                                         <Text style={styles.historyRoomName} numberOfLines={1}>{item.name}</Text>
@@ -214,7 +207,7 @@ export default function RoomSelectScreen() {
                     <View style={styles.line} />
                 </View>
 
-                {/* Bloco: Criar Sala */}
+                {/* Criar Sala */}
                 <View style={[styles.authBox, { borderColor: '#333' }]}>
                     <Text style={styles.boxTitle}>Criar Nova Sala</Text>
                     <TextInput
@@ -230,7 +223,7 @@ export default function RoomSelectScreen() {
                         onPress={reqCreateRoom} 
                         disabled={localLoading}
                     >
-                        {localLoading && !activeCode && !joinCode ? (
+                        {loadingType === 'create' ? (
                             <ActivityIndicator color="#fff" />
                         ) : (
                             <Text style={styles.buttonText}>Criar e Iniciar</Text>
@@ -260,8 +253,9 @@ const styles = StyleSheet.create({
     welcomeText: { color: 'white', fontSize: 24, fontWeight: '900' },
     logoutButton: { paddingVertical: 8, paddingHorizontal: 15, borderRadius: 12, backgroundColor: '#1a0a0a', borderWidth: 1, borderColor: '#331111' },
     logoutButtonText: { color: '#ff4444', fontWeight: 'bold', fontSize: 12 },
-    activeRoomCard: { width: '100%', backgroundColor: '#141125', padding: 20, borderRadius: 25, marginBottom: 30, borderWidth: 1, borderColor: '#7048e8', elevation: 4 },
+    activeRoomCard: { width: '100%', backgroundColor: '#141125', padding: 20, borderRadius: 25, marginBottom: 30, borderWidth: 1, borderColor: '#7048e8' },
     activeRoomInfo: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
+    activeCodeMini: { color: '#7048e8', fontSize: 14 },
     pulseDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#00FF00', marginRight: 12 },
     activeRoomLabel: { color: '#888', fontSize: 11, textTransform: 'uppercase', fontWeight: 'bold' },
     roomHighlight: { color: '#fff', fontWeight: 'bold', fontSize: 20 },
@@ -270,7 +264,7 @@ const styles = StyleSheet.create({
     authBox: { backgroundColor: '#141414', padding: 25, borderRadius: 30, width: '100%', borderWidth: 1, borderColor: '#222' },
     boxTitle: { fontSize: 16, color: '#fff', marginBottom: 20, textAlign: 'center', fontWeight: 'bold' },
     input: { backgroundColor: '#000', color: 'white', padding: 18, borderRadius: 15, marginBottom: 15, borderWidth: 1, borderColor: '#222', fontSize: 16, textAlign: 'center' },
-    primaryButton: { backgroundColor: '#7048e8', padding: 18, borderRadius: 15, alignItems: 'center' },
+    primaryButton: { backgroundColor: '#7048e8', padding: 18, borderRadius: 15, alignItems: 'center', minHeight: 55, justifyContent: 'center' },
     buttonText: { color: 'white', fontWeight: 'bold', fontSize: 15 },
     separatorContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 30, width: '100%' },
     line: { flex: 1, height: 1, backgroundColor: '#222' },

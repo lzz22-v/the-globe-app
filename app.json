@@ -8,7 +8,7 @@
     "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/globe-splash-logo.png",
-      "resizeMode": "contain",
+      "resizeMode": "cover", 
       "backgroundColor": "#0b0b0b"
     },
     "ios": {
@@ -21,12 +21,26 @@
         "backgroundColor": "#0b0b0b"
       },
       "package": "com.lzz22.theglobe",
-      "permissions": [] 
+      "permissions": [],
+      "splash": {
+        "image": "./assets/globe-splash-logo.png",
+        "resizeMode": "cover",
+        "backgroundColor": "#0b0b0b"
+      }
     },
     "web": {
       "favicon": "./assets/globe-logo.png"
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0b0b0b",
+          "image": "./assets/globe-splash-logo.png",
+          "imageWidth": 200
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "6f65bda1-7e10-4ea7-b8de-699615ef4165"

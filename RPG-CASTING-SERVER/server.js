@@ -11,11 +11,11 @@ const app = express();
 const server = http.createServer(app);
 
 // ==========================
-// 1. CONFIGURAÇÕES
+// 1. CONFIGURAÇÕES & SEGURANÇA
 // ==========================
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'jsonwebtoken_secret_key'; 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb+srv://luizvale132_db_user:R04cTRkJ4GgOYdPb@cluster0.flnqilb.mongodb.net/project0?retryWrites=true&w=majority";
+const MONGODB_URI = process.env.MONGODB_URI;
 
 cloudinary.config({
     cloud_name: process.env.CLOUDINARY_NAME || "dmdkwgoi", 
@@ -24,77 +24,90 @@ cloudinary.config({
 });
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+// Limite de 10mb é o equilíbrio ideal para evitar crash de RAM no servidor
+app.use(express.json({ limit: '10mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Helper para upload no Cloudinary
+/**
+ * HELPER: Upload com Compressão Inteligente
+ * Reduz o peso da imagem no servidor do Cloudinary antes de gerar o link.
+ */
 const uploadToCloudinary = async (base64Data) => {
     try {
-        if (!base64Data || base64Data.startsWith('http')) return base64Data;
+        if (!base64Data || typeof base64Data !== 'string') return null;
+        if (base64Data.startsWith('http')) return base64Data;
+
         const res = await cloudinary.uploader.upload(base64Data, {
             folder: "rpg_characters",
+            transformation: [
+                { width: 600, height: 600, crop: "limit" }, // Redimensiona se for gigante
+                { quality: "auto:low" }, // Compressão automática otimizada
+                { fetch_format: "auto" } // Converte para formatos leves como WebP
+            ]
         });
         return res.secure_url;
     } catch (err) {
-        console.error("Cloudinary Error:", err);
-        return null;
+        console.error("❌ Erro Cloudinary:", err.message);
+        return null; 
     }
 };
 
 // ==========================
-// 2. MODELS
+// 2. MODELS (Com Otimização de Busca)
 // ==========================
-const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
-    username: { type: String, required: true, unique: true },
+const UserSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true, index: true },
     password: { type: String, required: true }
-}));
+});
 
-const Room = mongoose.models.Room || mongoose.model('Room', new mongoose.Schema({
-    roomCode: { type: String, required: true, unique: true },
+const RoomSchema = new mongoose.Schema({
+    roomCode: { type: String, required: true, unique: true, index: true },
     roomName: { type: String, required: true },
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
-}));
+});
 
-const Character = mongoose.models.Character || mongoose.model('Character', new mongoose.Schema({
-    name: String,
-    img: String,
-    owner: { type: String, default: null },
+const CharacterSchema = new mongoose.Schema({
+    name: { type: String, required: true },
+    img: { type: String, default: "https://via.placeholder.com/150" },
+    owner: { type: String, default: null, index: true },
     active: { type: Boolean, default: false },
-    roomId: { type: String }
-}));
+    roomId: { type: String, index: true }
+});
 
-const Message = mongoose.models.Message || mongoose.model('Message', new mongoose.Schema({
+const MessageSchema = new mongoose.Schema({
     senderId: String,
     senderName: String,
     characterName: { type: String, default: null },
     characterImg: { type: String, default: null },
     text: String,
     roomId: String,
-    roomCode: String,
-    isRead: { type: Boolean, default: false },
+    roomCode: { type: String, index: true },
     deleted: { type: Boolean, default: false },
     isEpisode: { type: Boolean, default: false },
-    replyTo: {
-        text: String,
-        senderName: String
-    },
-    timestamp: { type: Date, default: Date.now }
-}));
+    replyTo: { text: String, senderName: String },
+    timestamp: { type: Date, default: Date.now, index: true }
+});
+
+const User = mongoose.models.User || mongoose.model('User', UserSchema);
+const Room = mongoose.models.Room || mongoose.model('Room', RoomSchema);
+const Character = mongoose.models.Character || mongoose.model('Character', CharacterSchema);
+const Message = mongoose.models.Message || mongoose.model('Message', MessageSchema);
 
 // ==========================
-// 3. SOCKET.IO
+// 3. SOCKET.IO (Estabilidade de Longa Duração)
 // ==========================
 const io = new Server(server, { 
-    cors: { origin: "*", methods: ["GET", "POST"] },
-    pingTimeout: 30000,
+    cors: { origin: "*" },
+    pingTimeout: 60000, // Dá mais tempo para uploads em internet oscilante
+    maxHttpBufferSize: 1e7 // Limite de 10mb para pacotes socket
 });
 
 io.use(async (socket, next) => {
     try {
         const token = socket.handshake.auth?.token || socket.handshake.headers?.token;
         if (!token) {
-            socket.userId = "GUEST_" + Math.random().toString(36).substring(7);
-            socket.username = "Jogador Web";
+            socket.userId = `GUEST_${Math.random().toString(36).substring(7)}`;
+            socket.username = "Viajante";
             return next();
         }
         const decoded = jwt.verify(token, JWT_SECRET);
@@ -104,23 +117,31 @@ io.use(async (socket, next) => {
     } catch (err) { next(); }
 });
 
+const emitUpdateList = async (roomId, roomCode) => {
+    try {
+        const chars = await Character.find({ roomId }).select('-__v').lean();
+        io.to(roomCode).emit("update_list", chars);
+    } catch (e) { console.error("Emit List Error:", e); }
+};
+
 io.on("connection", (socket) => {
-    console.log(`🔌 Conectado: ${socket.username}`);
 
     socket.on("join_room", async (data) => {
         try {
-            const cleanCode = data.roomCode ? data.roomCode.toUpperCase().trim() : null;
+            const cleanCode = data.roomCode?.toUpperCase().trim();
             if (!cleanCode) return;
-            const room = await Room.findOne({ roomCode: cleanCode });
+
+            const room = await Room.findOne({ roomCode: cleanCode }).lean();
             if (!room) return;
             
             socket.join(cleanCode);
             socket.currentRoomCode = cleanCode; 
             socket.currentRoomId = room._id.toString();
 
-            const chars = await Character.find({ roomId: socket.currentRoomId }).lean();
-            const history = await Message.find({ roomCode: cleanCode })
-                .sort({ timestamp: -1 }).limit(50).lean();
+            const [chars, history] = await Promise.all([
+                Character.find({ roomId: socket.currentRoomId }).lean(),
+                Message.find({ roomCode: cleanCode }).sort({ timestamp: -1 }).limit(40).lean()
+            ]);
             
             socket.emit("room_joined", { 
                 roomCode: cleanCode, 
@@ -131,85 +152,60 @@ io.on("connection", (socket) => {
             
             socket.emit("chat_history", history.reverse());
             io.to(cleanCode).emit("update_list", chars);
-        } catch (e) { console.log("Erro no Join:", e) }
+        } catch (e) { console.error("Join Error:", e); }
     });
 
     socket.on("update_character", async ({ charId, name, img }) => {
         try {
-            let finalImg = img;
-            if (img && img.startsWith('data:image')) {
-                finalImg = await uploadToCloudinary(img);
+            let updateData = { name };
+            if (img && img.includes('base64')) {
+                const finalImg = await uploadToCloudinary(img);
+                if (finalImg) updateData.img = finalImg;
             }
-            
-            await Character.findByIdAndUpdate(charId, { name, img: finalImg });
-            if (socket.currentRoomId) {
-                const chars = await Character.find({ roomId: socket.currentRoomId });
-                io.to(socket.currentRoomCode).emit("update_list", chars);
-            }
-        } catch (e) { console.log("Erro update char:", e); }
+
+            await Character.findByIdAndUpdate(charId, updateData);
+            if (socket.currentRoomId) await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Update Char Error:", e); }
     });
 
     socket.on("send_message", async (data) => {
-        const rCode = socket.currentRoomCode;
-        if (!rCode || !data.text) return;
+        if (!socket.currentRoomCode || !data.text) return;
         try {
             const activeChar = await Character.findOne({ 
                 owner: socket.userId, 
                 active: true, 
                 roomId: socket.currentRoomId 
-            });
+            }, 'name img').lean();
 
             const msg = await Message.create({
                 senderId: socket.userId,
                 senderName: socket.username,
-                characterName: activeChar ? activeChar.name : null,
-                characterImg: activeChar ? activeChar.img : null,
+                characterName: activeChar?.name || null,
+                characterImg: activeChar?.img || null,
                 text: data.text.trim(),
                 roomId: socket.currentRoomId,
-                roomCode: rCode,
+                roomCode: socket.currentRoomCode,
                 replyTo: data.replyTo,
-                isRead: false,
-                isEpisode: data.isEpisode || false 
+                isEpisode: !!data.isEpisode 
             });
-            io.to(rCode).emit("receive_message", msg);
-        } catch (e) { console.log("Erro msg:", e) }
-    });
-
-    socket.on("read_messages", async ({ roomCode, messageId }) => {
-        try {
-            await Message.findByIdAndUpdate(messageId, { isRead: true });
-            io.to(roomCode).emit("messages_read", { lastReadMessageId: messageId });
-        } catch (e) { console.log("Erro read:", e); }
-    });
-
-    socket.on("delete_message", async (messageId) => {
-        try {
-            const msg = await Message.findById(messageId);
-            if (msg && String(msg.senderId) === String(socket.userId)) {
-                msg.text = "🚫 Mensagem apagada";
-                msg.deleted = true;
-                await msg.save();
-                io.to(socket.currentRoomCode).emit("message_deleted", messageId);
-            }
-        } catch (e) { console.log("Erro delete msg:", e); }
+            io.to(socket.currentRoomCode).emit("receive_message", msg);
+        } catch (e) { console.error("Msg Error:", e); }
     });
 
     socket.on("create_character", async (charData) => {
         try {
             if (!socket.currentRoomId) return;
-            
             const uploadedImg = await uploadToCloudinary(charData.img);
 
             await Character.create({
                 name: charData.name,
-                img: uploadedImg,
+                img: uploadedImg || "https://via.placeholder.com/150",
                 roomId: socket.currentRoomId,
                 active: false,
                 owner: null
             });
-            const chars = await Character.find({ roomId: socket.currentRoomId });
-            io.to(socket.currentRoomCode).emit("update_list", chars);
-        } catch (e) { console.log("Erro create char:", e); }
+            await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Create Char Error:", e); }
     });
 
     socket.on("claim_character", async (charId) => {
@@ -218,53 +214,55 @@ io.on("connection", (socket) => {
                 { owner: socket.userId, roomId: socket.currentRoomId }, 
                 { active: false }
             );
-            await Character.findByIdAndUpdate(charId, {
-                owner: socket.userId,
-                active: true
-            });
-            const chars = await Character.find({ roomId: socket.currentRoomId });
-            io.to(socket.currentRoomCode).emit("update_list", chars);
-        } catch (e) { console.log("Erro claim:", e); }
+            await Character.findByIdAndUpdate(charId, { owner: socket.userId, active: true });
+            await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Claim Error:", e); }
     });
 
     socket.on("release_character", async (charId) => {
         try {
             await Character.findByIdAndUpdate(charId, { owner: null, active: false });
-            const chars = await Character.find({ roomId: socket.currentRoomId });
-            io.to(socket.currentRoomCode).emit("update_list", chars);
-        } catch (e) { console.log("Erro release:", e); }
+            await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Release Error:", e); }
     });
 
     socket.on("delete_character", async (charId) => {
         try {
             await Character.findByIdAndDelete(charId);
-            const chars = await Character.find({ roomId: socket.currentRoomId });
-            io.to(socket.currentRoomCode).emit("update_list", chars);
-        } catch (e) { console.log("Erro delete char:", e); }
+            await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Delete Char Error:", e); }
+    });
+
+    socket.on("delete_message", async (messageId) => {
+        try {
+            const msg = await Message.findOneAndUpdate(
+                { _id: messageId, senderId: socket.userId },
+                { text: "🚫 Mensagem apagada", deleted: true },
+                { new: true }
+            );
+            if (msg) io.to(socket.currentRoomCode).emit("message_deleted", messageId);
+        } catch (e) { console.error("Delete Msg Error:", e); }
     });
 
     socket.on("typing", (data) => {
-        if (!socket.currentRoomCode) return;
-        socket.to(socket.currentRoomCode).emit("display_typing", {
-            id: String(data.id),
-            name: data.name
-        });
+        if (socket.currentRoomCode) {
+            socket.to(socket.currentRoomCode).emit("display_typing", { id: String(data.id), name: data.name });
+        }
     });
 
     socket.on("stop_typing", (data) => {
-        if (!socket.currentRoomCode) return;
-        socket.to(socket.currentRoomCode).emit("hide_typing", {
-            id: String(data.id)
-        });
+        if (socket.currentRoomCode) {
+            socket.to(socket.currentRoomCode).emit("hide_typing", { id: String(data.id) });
+        }
     });
 
-    socket.on("disconnect", () => console.log(`❌ Desconectado`));
+    socket.on("disconnect", () => {});
 });
 
 // ==========================
-// 4. APIs REST
+// 4. APIs REST (Registro/Login)
 // ==========================
-app.get('/', (req, res) => res.send("RPG Server Online 🚀 - v2.2.2 Ekaterina"));
+app.get('/', (req, res) => res.send("RPG Server Online 🚀 - v2.4.0"));
 
 app.post('/api/rooms/create', async (req, res) => {
     try {
@@ -276,14 +274,14 @@ app.post('/api/rooms/create', async (req, res) => {
             ownerId: mongoose.Types.ObjectId.isValid(ownerId) ? ownerId : null 
         });
         res.status(201).json(newRoom);
-    } catch (e) { res.status(500).json({ message: "Erro interno." }); }
+    } catch (e) { res.status(500).json({ message: "Erro ao criar sala." }); }
 });
 
 app.post('/api/users/register', async (req, res) => {
     try {
         const { username, password } = req.body;
         const hashedPassword = await bcrypt.hash(password, 10);
-        await User.create({ username, password: hashedPassword });
+        await User.create({ username: username.trim(), password: hashedPassword });
         res.status(201).json({ message: "Sucesso" });
     } catch (e) { res.status(400).json({ message: "Usuário já existe" }); }
 });
@@ -291,13 +289,12 @@ app.post('/api/users/register', async (req, res) => {
 app.post('/api/users/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        const user = await User.findOne({ username });
+        const user = await User.findOne({ username: username.trim() });
         if (!user || !(await bcrypt.compare(password, user.password))) {
             return res.status(401).json({ message: "Credenciais inválidas" });
         }
-        const userIdStr = user._id.toString();
-        const token = jwt.sign({ id: userIdStr, username: user.username }, JWT_SECRET);
-        res.json({ token, username: user.username, id: userIdStr });
+        const token = jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: '7d' });
+        res.json({ token, username: user.username, id: user._id });
     } catch (e) { res.status(500).json({ message: "Erro no login" }); }
 });
 
@@ -306,14 +303,16 @@ app.post('/api/users/login', async (req, res) => {
 // ==========================
 async function startServer() {
     try {
+        mongoose.set('strictQuery', false);
+        if (!MONGODB_URI) throw new Error("MONGODB_URI não definida!");
         await mongoose.connect(MONGODB_URI);
         console.log("✅ MongoDB Atlas Conectado");
 
         server.listen(PORT, () => {
-            console.log(`🚀 Servidor rodando na porta ${PORT}`);
+            console.log(`🚀 Servidor Ekaterina v2.4 rodando na porta ${PORT}`);
         });
     } catch (err) {
-        console.error("❌ Erro ao conectar no MongoDB:", err);
+        console.error("❌ Erro fatal:", err.message);
         process.exit(1);
     }
 }
