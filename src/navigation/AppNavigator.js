@@ -1,12 +1,10 @@
 import React, { useContext } from 'react';
-import { ActivityIndicator, View, StyleSheet } from 'react-native'; 
+import { ActivityIndicator, View, StyleSheet, StatusBar } from 'react-native'; 
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-// Contexto
 import { GameContext } from '../context/GameContext'; 
 
-// Telas
 import RoomSelectScreen from '../screens/RoomSelectScreen';
 import GameScreen from '../screens/GameScreen';
 import LoginScreen from '../screens/LoginScreen'; 
@@ -14,12 +12,14 @@ import LoginScreen from '../screens/LoginScreen';
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
-    const { user, room, isLoading } = useContext(GameContext);
+    // Pegamos também o setUser para garantir que o contexto está acessível
+    const { user, isLoading } = useContext(GameContext);
 
-    // Corrigido: Substituímos 'div' por 'View'
+    // Se estiver carregando dados do AsyncStorage ou processando login
     if (isLoading) {
         return (
             <View style={styles.loadingContainer}>
+                <StatusBar barStyle="light-content" />
                 <ActivityIndicator size="large" color="#7048e8" />
             </View>
         );
@@ -27,20 +27,37 @@ export default function AppNavigator() {
 
     return (
         <NavigationContainer>
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
-                
-                {/* Lógica de fluxo de navegação */}
-                {!user ? (
-                    // 1. Não logado -> Login
-                    <Stack.Screen name="Login" component={LoginScreen} />
-                ) : !room ? (
-                    // 2. Logado, mas sem sala -> Seleção de Sala
-                    <Stack.Screen name="RoomSelect" component={RoomSelectScreen} />
+            <Stack.Navigator 
+                screenOptions={{ 
+                    headerShown: false,
+                    animation: 'fade'
+                }}
+            >
+                {/* A checagem user?.token é mais segura. 
+                  O React Navigation gerencia a troca de telas automaticamente 
+                  assim que o estado 'user' deixa de ser nulo.
+                */}
+                {user && user.token ? (
+                    <Stack.Group>
+                        <Stack.Screen 
+                            name="RoomSelect" 
+                            component={RoomSelectScreen} 
+                        />
+                        <Stack.Screen 
+                            name="Game" 
+                            component={GameScreen} 
+                            options={{ 
+                                animation: 'slide_from_right',
+                                gestureEnabled: false 
+                            }}
+                        />
+                    </Stack.Group>
                 ) : (
-                    // 3. Logado e em uma sala -> Tela de Jogo
-                    <Stack.Screen name="Game" component={GameScreen} />
+                    <Stack.Screen 
+                        name="Login" 
+                        component={LoginScreen} 
+                    />
                 )}
-
             </Stack.Navigator>
         </NavigationContainer>
     );
@@ -51,6 +68,6 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: '#0f0f0f', 
+        backgroundColor: '#0a0a0a', 
     }
 });

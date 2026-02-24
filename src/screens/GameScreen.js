@@ -3,24 +3,29 @@ import {
     View, Text, FlatList, StyleSheet, 
     TextInput, TouchableOpacity, KeyboardAvoidingView, 
     Platform, Image, StatusBar, Vibration,
-    ToastAndroid, BackHandler 
+    ToastAndroid, BackHandler, Modal
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-// Removido useNavigation pois usaremos o estado condicional do AppNavigator
+import * as ImagePicker from 'expo-image-picker'; 
 import { GameContext } from '../context/GameContext'; 
 import ActionModal from '../components/ActionModal'; 
 import CreateCharacterModal from '../components/CreateCharacterModal';
 import MessageOptionsModal from '../components/MessageOptionsModal'; 
 import CustomAlert from '../components/CustomAlert';
 
-export default function GameScreen() {
+// Importação novos ícones SVG (Adicionado BlockIcon)
+import { CameraIcon, EpisodeIcon, BlockIcon } from '../components/AppIcons';
+
+export default function GameScreen({ navigation }) {
     const { 
         user, room, characters, messages,   
-        sendMessage, claimCharacter, releaseCharacter,
-        createCharacter, deleteCharacter,
+        sendMessage, sendEpisode, 
+        claimCharacter, releaseCharacter,
+        createCharacter, deleteCharacter, updateCharacter,
         typingUsers, sendTypingStatus,
-        deleteMessage, markAsRead, leaveRoom, // Importada a nova função
-        customAlert, showAlert, hideAlert 
+        deleteMessage, markAsRead, leaveRoom, 
+        customAlert, showAlert, hideAlert,
+        setIsChatActive 
     } = useContext(GameContext);
 
     const [text, setText] = useState('');
@@ -30,51 +35,80 @@ export default function GameScreen() {
     const [menuVisible, setMenuVisible] = useState(false);
     const [messageToManage, setMessageToManage] = useState(null);
 
+    const [epModalVisible, setEpModalVisible] = useState(false);
+    const [epNumber, setEpNumber] = useState('');
+
+    const [editModalVisible, setEditModalVisible] = useState(false);
+    const [charToEdit, setCharToEdit] = useState(null);
+    const [editName, setEditName] = useState('');
+    const [editImg, setEditImg] = useState(null); 
+
     const flatListRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const inputRef = useRef(null);
 
-    // --- DEBUG DE IDENTIDADE ---
-    useEffect(() => {
-        console.log("ID do Usuário Atual:", user?.id);
-    }, [user]);
-
-    // --- LÓGICA DE SAÍDA (CORRIGIDA) ---
-    const handleExitRoom = () => {
-        // Em vez de navegar manualmente, limpamos o estado da sala.
-        // O AppNavigator irá redirecionar automaticamente para RoomSelect.
-        leaveRoom();
-        return true; 
-    };
+    const currentUserId = String(user?.id || user?._id || '').trim();
 
     useEffect(() => {
-        const backHandler = BackHandler.addEventListener(
-            'hardwareBackPress',
-            handleExitRoom
-        );
+        setIsChatActive(true);
+        if (!room) navigation.replace('RoomSelect');
+        return () => setIsChatActive(false);
+    }, [room]);
+
+    useEffect(() => {
+        const backAction = () => {
+            navigation.navigate('RoomSelect');
+            return true; 
+        };
+        const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
         return () => backHandler.remove();
     }, []);
 
-    // --- MARCAR MENSAGENS COMO LIDAS ---
     useEffect(() => {
         if (messages.length > 0) {
             const lastMsg = messages[messages.length - 1];
-            const isFromMe = String(lastMsg.senderId).trim() === String(user?.id).trim();
-
+            const isFromMe = String(lastMsg.senderId).trim() === currentUserId;
             if (lastMsg?._id && !isFromMe && !lastMsg.isRead) {
                 markAsRead(lastMsg._id);
             }
         }
-    }, [messages, user]);
+    }, [messages, currentUserId]);
+
+    const handlePickImage = async () => {
+        try {
+            const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+            if (!permission.granted) {
+                alert("Precisamos de permissão para acessar a galeria.");
+                return;
+            }
+            const result = await ImagePicker.launchImageLibraryAsync({
+                mediaTypes: ['images'],
+                allowsEditing: true,
+                aspect: [1, 1],
+                quality: 0.7,
+            });
+            if (!result.canceled && result.assets?.length > 0) {
+                setEditImg(result.assets[0].uri);
+            }
+        } catch (error) {
+            console.log("Erro ao abrir galeria:", error);
+        }
+    };
+
+    const handleBackToSelect = () => {
+        Vibration.vibrate(50);
+        navigation.navigate('RoomSelect');
+    };
 
     const copyToClipboard = async () => {
-        if (room?.code) {
-            await Clipboard.setStringAsync(room.code);
+        const code = room?.code || room?.roomCode;
+        if (code) {
+            await Clipboard.setStringAsync(code);
             Vibration.vibrate(50);
             if (Platform.OS === 'android') {
                 ToastAndroid.show("Código copiado!", ToastAndroid.SHORT);
             } else {
-                showAlert("Copiado", "Código da sala copiado!");
+                showAlert("Copiado", "Código da sala copiado!", "info");
             }
         }
     };
@@ -84,9 +118,7 @@ export default function GameScreen() {
         if (value.length > 0) {
             sendTypingStatus(true);
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-            typingTimeoutRef.current = setTimeout(() => {
-                sendTypingStatus(false);
-            }, 2000);
+            typingTimeoutRef.current = setTimeout(() => sendTypingStatus(false), 2000);
         } else {
             sendTypingStatus(false);
         }
@@ -99,18 +131,50 @@ export default function GameScreen() {
             setReplyTo(null); 
             sendTypingStatus(false);
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+            setTimeout(() => flatListRef.current?.scrollToOffset({ offset: 0, animated: true }), 100);
         }
     };
 
+    const handleSendEpisode = () => {
+        if (epNumber.trim()) {
+            sendEpisode(epNumber.trim());
+            setEpNumber('');
+            setEpModalVisible(false);
+            Vibration.vibrate(100);
+        }
+    };
+
+    const handleLongPressChar = (item) => {
+        const ownerId = item.owner ? String(item.owner).trim() : null;
+        if (ownerId === currentUserId) {
+            Vibration.vibrate(80);
+            setCharToEdit(item);
+            setEditName(item.name);
+            setEditImg(item.img);
+            setEditModalVisible(true);
+        }
+    };
+
+    const handleSaveEdit = () => {
+        if (!editName.trim()) return showAlert("Erro", "O nome não pode estar vazio", "error");
+        updateCharacter(charToEdit._id, { 
+            name: editName.trim(), 
+            img: editImg 
+        });
+        setEditModalVisible(false);
+        setCharToEdit(null);
+        if (Platform.OS === 'android') ToastAndroid.show("Personagem atualizado!", ToastAndroid.SHORT);
+    };
+
     const handleLongPressMessage = (item) => {
-        if (item.deleted) return;
+        if (item.deleted || item.isEpisode) return;
         Vibration.vibrate(50);
         setMessageToManage(item);
         setMenuVisible(true);
     };
 
     const renderTypingIndicator = () => {
-        const othersTyping = typingUsers.filter(u => String(u.id).trim() !== String(user?.id).trim());
+        const othersTyping = typingUsers.filter(u => String(u.id).trim() !== currentUserId);
         if (othersTyping.length === 0) return null;
         return (
             <View style={styles.typingContainer}>
@@ -123,7 +187,6 @@ export default function GameScreen() {
 
     const renderPlayer = ({ item }) => {
         const ownerId = item.owner ? String(item.owner).trim() : null;
-        const currentUserId = user?.id ? String(user.id).trim() : '';
         const isMine = ownerId === currentUserId;
         const isActive = item.active === true;
         const isFree = !ownerId;
@@ -146,6 +209,7 @@ export default function GameScreen() {
             <TouchableOpacity 
                 style={[styles.charCard, cardStyle]} 
                 onPress={() => setSelectedChar(item)}
+                onLongPress={() => handleLongPressChar(item)}
                 activeOpacity={0.7}
             >
                 <Image 
@@ -163,16 +227,30 @@ export default function GameScreen() {
     };
 
     const renderMessage = ({ item }) => {
-        const isMyMessage = String(item.senderId).trim() === String(user?.id).trim();
+        const isMyMessage = String(item.senderId).trim() === currentUserId;
         const hasChar = item.characterName && item.characterImg;
         const isReply = item.replyTo && item.replyTo.text;
+
+        if (item.isEpisode) {
+            return (
+                <View style={styles.episodeContainer}>
+                    <View style={styles.episodeLine} />
+                    <View style={styles.episodeBadge}>
+                        <EpisodeIcon size={16} color="#7048e8" />
+                        <Text style={styles.episodeText}> EPISÓDIO {item.text}</Text>
+                    </View>
+                    <View style={styles.episodeLine} />
+                </View>
+            );
+        }
 
         if (item.deleted) {
             return (
                 <View style={[styles.messageRow, isMyMessage ? { flexDirection: 'row-reverse' } : { flexDirection: 'row' }]}>
                     <View style={styles.msgNoCharSpacer} />
-                    <View style={[styles.msgBox, styles.deletedMsg]}>
-                        <Text style={styles.deletedMsgText}>🚫 Mensagem apagada</Text>
+                    <View style={[styles.msgBox, styles.deletedMsg, { flexDirection: 'row', alignItems: 'center' }]}>
+                        <BlockIcon size={14} color="#555" />
+                        <Text style={[styles.deletedMsgText, { marginLeft: 5 }]}>Mensagem apagada</Text>
                     </View>
                 </View>
             );
@@ -225,13 +303,12 @@ export default function GameScreen() {
             
             <View style={styles.header}>
                 <View style={styles.headerLeftGroup}>
-                    <TouchableOpacity onPress={handleExitRoom} style={styles.backBtn}>
-                        <Text style={styles.backBtnText}>←</Text>
+                    <TouchableOpacity onPress={handleBackToSelect} style={styles.backBtn}>
+                        <Text style={styles.backBtnText}>❮</Text>
                     </TouchableOpacity>
-
                     <TouchableOpacity onPress={copyToClipboard} activeOpacity={0.6} style={styles.roomInfo}>
-                        <Text style={styles.roomLabel}>Sala: {room?.code} </Text>
-                        <Text style={styles.roomTitle}>{room?.name || 'RPG Room'}</Text>
+                        <Text style={styles.roomLabel}>Código: {room?.code || room?.roomCode} </Text>
+                        <Text style={styles.roomTitle} numberOfLines={1}>{room?.name || room?.roomName || 'Carregando...'}</Text>
                     </TouchableOpacity>
                 </View>
 
@@ -244,7 +321,7 @@ export default function GameScreen() {
                 <FlatList 
                     data={characters || []} 
                     renderItem={renderPlayer} 
-                    keyExtractor={item => item._id} 
+                    keyExtractor={item => item._id?.toString()} 
                     horizontal 
                     showsHorizontalScrollIndicator={false} 
                     contentContainerStyle={{ paddingHorizontal: 15, alignItems: 'center' }} 
@@ -254,13 +331,14 @@ export default function GameScreen() {
             <KeyboardAvoidingView 
                 behavior={Platform.OS === "ios" ? "padding" : "height"} 
                 style={styles.chatContainer}
+                keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
             >
                 <View style={{ flex: 1 }}>
                     <FlatList 
                         ref={flatListRef}
                         data={[...messages].reverse()} 
                         inverted 
-                        keyExtractor={(item, index) => item._id || index.toString()}
+                        keyExtractor={(item, index) => item._id?.toString() || index.toString()}
                         renderItem={renderMessage}
                         contentContainerStyle={{ padding: 15 }}
                     />
@@ -285,6 +363,13 @@ export default function GameScreen() {
                     )}
 
                     <View style={styles.inputArea}>
+                        <TouchableOpacity 
+                            style={styles.epBtn} 
+                            onPress={() => setEpModalVisible(true)}
+                        >
+                            <EpisodeIcon size={20} color="#7048e8" />
+                        </TouchableOpacity>
+
                         <TextInput 
                             ref={inputRef}
                             style={styles.input} 
@@ -294,16 +379,84 @@ export default function GameScreen() {
                             onChangeText={handleTextChange} 
                             onSubmitEditing={handleSend}
                         />
-                        <TouchableOpacity style={styles.sendBtn} onPress={handleSend}>
+                        <TouchableOpacity 
+                            style={[styles.sendBtn, !text.trim() && { opacity: 0.5 }]} 
+                            onPress={handleSend}
+                            disabled={!text.trim()}
+                        >
                             <Text style={styles.sendBtnText}>➤</Text>
                         </TouchableOpacity>
                     </View>
                 </View>
             </KeyboardAvoidingView>
 
+            <Modal visible={epModalVisible} transparent animationType="slide">
+                <View style={styles.modalOverlay}>
+                    <View style={styles.editModalBox}>
+                        <EpisodeIcon size={40} color="#7048e8" />
+                        <Text style={[styles.editModalTitle, {marginTop: 10}]}>Novo Episódio</Text>
+                        <TextInput 
+                            style={styles.editInput}
+                            placeholder="Ex: 01, 02..."
+                            placeholderTextColor="#555"
+                            keyboardType="numeric"
+                            value={epNumber}
+                            onChangeText={setEpNumber}
+                            autoFocus
+                        />
+                        <View style={styles.editActions}>
+                            <TouchableOpacity style={[styles.editBtn, styles.cancelBtn]} onPress={() => setEpModalVisible(false)}>
+                                <Text style={styles.editBtnText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.editBtn, styles.saveBtn]} onPress={handleSendEpisode}>
+                                <Text style={styles.editBtnText}>Ação!</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
+                visible={editModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setEditModalVisible(false)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.editModalBox}>
+                        <Text style={styles.editModalTitle}>Editar Personagem</Text>
+                        <TouchableOpacity style={styles.imagePickerWrapper} onPress={handlePickImage}>
+                            <Image 
+                                source={{ uri: editImg || 'https://via.placeholder.com/100' }} 
+                                style={styles.editAvatarPreview} 
+                            />
+                            <View style={styles.editIconBadge}>
+                                <CameraIcon size={16} color="#fff" />
+                            </View>
+                        </TouchableOpacity>
+                        <Text style={styles.inputLabel}>Nome do Personagem</Text>
+                        <TextInput 
+                            style={styles.editInput}
+                            value={editName}
+                            onChangeText={setEditName}
+                            placeholder="Nome..."
+                            placeholderTextColor="#555"
+                        />
+                        <View style={styles.editActions}>
+                            <TouchableOpacity style={[styles.editBtn, styles.cancelBtn]} onPress={() => setEditModalVisible(false)}>
+                                <Text style={styles.editBtnText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.editBtn, styles.saveBtn]} onPress={handleSaveEdit}>
+                                <Text style={styles.editBtnText}>Salvar</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
             <MessageOptionsModal 
                 visible={menuVisible}
-                isMyMessage={String(messageToManage?.senderId).trim() === String(user?.id).trim()}
+                isMyMessage={String(messageToManage?.senderId).trim() === currentUserId}
                 onClose={() => setMenuVisible(false)}
                 onReply={() => {
                     setReplyTo(messageToManage);
@@ -328,7 +481,7 @@ export default function GameScreen() {
                 <ActionModal 
                     visible={!!selectedChar} 
                     character={selectedChar} 
-                    myIdentity={user?.id}
+                    myIdentity={currentUserId}
                     onClose={() => setSelectedChar(null)} 
                     onClaim={(id) => { claimCharacter(id); setSelectedChar(null); }} 
                     onRelease={(id) => { releaseCharacter(id); setSelectedChar(null); }} 
@@ -353,7 +506,7 @@ const styles = StyleSheet.create({
     header: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 15, alignItems: 'center', marginTop: 28 },
     headerLeftGroup: { flexDirection: 'row', alignItems: 'center', flex: 1 }, 
     backBtn: { marginRight: 15, padding: 5 },
-    backBtnText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
+    backBtnText: { color: '#7048e8', fontSize: 24, fontWeight: 'bold' },
     roomInfo: { flex: 1 },
     roomLabel: { color: '#666', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1 },
     roomTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
@@ -397,10 +550,28 @@ const styles = StyleSheet.create({
     replyPreviewText: { color: '#ccc', fontSize: 13 },
     replyCloseBtn: { padding: 5 },
     replyCloseText: { color: '#888', fontSize: 18, fontWeight: 'bold' },
-    inputArea: { flexDirection: 'row', paddingHorizontal: 25, paddingTop: 15, paddingBottom: Platform.OS === 'ios' ? 35 : 40, backgroundColor: '#161616', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#222' },
+    inputArea: { flexDirection: 'row', paddingHorizontal: 15, paddingTop: 15, paddingBottom: Platform.OS === 'ios' ? 35 : 40, backgroundColor: '#161616', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#222' },
     input: { flex: 1, backgroundColor: '#000', color: '#fff', borderRadius: 25, paddingHorizontal: 20, height: 48, fontSize: 16 },
     sendBtn: { marginLeft: 12, width: 48, height: 48, borderRadius: 24, backgroundColor: '#7048e8', justifyContent: 'center', alignItems: 'center' },
     sendBtnText: { color: '#fff', fontSize: 20 },
-    typingContainer: { paddingHorizontal: 20, paddingVertical: 5 },
-    typingText: { color: '#7048e8', fontSize: 12, fontStyle: 'italic' }
+    epBtn: { marginRight: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+    typingContainer: {paddingHorizontal: 20, paddingVertical: 5 },
+    typingText: { color: '#7048e8', fontSize: 12, fontStyle: 'italic' },
+    episodeContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 25, paddingHorizontal: 20 },
+    episodeLine: { flex: 1, height: 1, backgroundColor: '#333' },
+    episodeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#1a1a1a', paddingHorizontal: 15, paddingVertical: 6, borderRadius: 15, borderWidth: 1, borderColor: '#7048e8', marginHorizontal: 10 },
+    episodeText: { color: '#7048e8', fontWeight: 'bold', fontSize: 13, letterSpacing: 2 },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
+    editModalBox: { width: '85%', backgroundColor: '#1a1a1a', borderRadius: 25, padding: 25, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
+    editModalTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
+    imagePickerWrapper: { position: 'relative', marginBottom: 25 },
+    editAvatarPreview: { width: 100, height: 100, borderRadius: 50, borderWidth: 2, borderColor: '#7048e8' },
+    editIconBadge: { position: 'absolute', bottom: 0, right: 0, backgroundColor: '#7048e8', width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#1a1a1a' },
+    inputLabel: { color: '#7048e8', fontSize: 12, fontWeight: 'bold', marginBottom: 5, textTransform: 'uppercase', alignSelf: 'flex-start' },
+    editInput: { width: '100%', backgroundColor: '#000', color: '#fff', borderRadius: 12, padding: 12, marginBottom: 20, fontSize: 16, borderWidth: 1, borderColor: '#222' },
+    editActions: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+    editBtn: { flex: 0.48, paddingVertical: 12, borderRadius: 15, alignItems: 'center' },
+    cancelBtn: { backgroundColor: '#333' },
+    saveBtn: { backgroundColor: '#7048e8' },
+    editBtnText: { color: '#fff', fontWeight: 'bold', fontSize: 16 }
 });
