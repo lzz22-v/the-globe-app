@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "rpg-casting-server",
+    "slug": "rpg-casting-server",
+    "extra": {
+      "eas": {
+        "projectId": "e43d8d1f-43a9-4f46-ac62-25f7c2b025d1"
+      }
+    }
+  }
+}

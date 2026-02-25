@@ -20,7 +20,6 @@ export const useGame = () => useContext(GameContext);
 const BASE_URL = API_URL;
 
 export const GameProvider = ({ children }) => {
-    // Estados principais
     const [user, setUser] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [socket, setSocket] = useState(null);
@@ -35,15 +34,37 @@ export const GameProvider = ({ children }) => {
     const socketRef = useRef(null);
     const lastTypingStatus = useRef(false);
 
-    // Helper: Comparação segura de IDs
     const compareIds = (id1, id2) => String(id1 || '').trim() === String(id2 || '').trim();
+
+    // ==========================
+    // HELPERS DE IMAGEM
+    // ==========================
+    const getFullImageUrl = (img) => {
+        if (!img) return "https://via.placeholder.com/150/1a1a1a/7048e8?text=RPG";
+        if (img.startsWith('data:') || img.startsWith('http') || img.includes('cloudinary')) {
+            return img;
+        }
+        const cleanBase = BASE_URL.endsWith('/') ? BASE_URL.slice(0, -1) : BASE_URL;
+        const cleanImg = img.startsWith('/') ? img : `/${img}`;
+        return `${cleanBase}${cleanImg}`;
+    };
+
+    const processLocalImage = async (imgUri) => {
+        if (!imgUri) return null;
+        if (imgUri.startsWith('data:') || imgUri.startsWith('http')) return imgUri;
+        try {
+            const base64 = await FileSystem.readAsStringAsync(imgUri, { encoding: 'base64' });
+            return `data:image/jpeg;base64,${base64}`;
+        } catch (e) {
+            console.error("[Context] Erro ao processar imagem local:", e);
+            return imgUri; 
+        }
+    };
 
     useEffect(() => {
         checkLogin();
-        
-        const notificationSub = Notifications.addNotificationReceivedListener(() => console.log("[Push] Recebida"));
-        const responseSub = Notifications.addNotificationResponseReceivedListener(() => console.log("[Push] Clicada"));
-
+        const notificationSub = Notifications.addNotificationReceivedListener(() => {});
+        const responseSub = Notifications.addNotificationResponseReceivedListener(() => {});
         return () => {
             notificationSub.remove();
             responseSub.remove();
@@ -56,7 +77,6 @@ export const GameProvider = ({ children }) => {
     // ==========================
     const registerForPushNotificationsAsync = async () => {
         if (!Device.isDevice) return null;
-        
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
         if (existingStatus !== 'granted') {
@@ -64,12 +84,10 @@ export const GameProvider = ({ children }) => {
             finalStatus = status;
         }
         if (finalStatus !== 'granted') return null;
-
         try {
             const token = (await Notifications.getExpoPushTokenAsync({
                 projectId: '6f65bda1-7e10-4ea7-b8de-699615ef4165' 
             })).data;
-
             if (Platform.OS === 'android') {
                 Notifications.setNotificationChannelAsync('default', {
                     name: 'default',
@@ -100,13 +118,19 @@ export const GameProvider = ({ children }) => {
     const hideAlert = () => setCustomAlert(prev => ({ ...prev, visible: false }));
 
     // ==========================
+    // FUNÇÕES DE UTILIDADE
+    // ==========================
+    const markAsRead = useCallback(() => {
+        Notifications.dismissAllNotificationsAsync();
+    }, []);
+
+    // ==========================
     // AUTH LÓGICA
     // ==========================
     const checkLogin = async () => {
         try {
             const values = await AsyncStorage.multiGet(['userToken', 'username', 'userId']);
             const [[, token], [, username], [, userId]] = values;
-
             if (token && username && userId) {
                 const userData = { token, username, id: userId.trim() };
                 setUser(userData);
@@ -126,14 +150,8 @@ export const GameProvider = ({ children }) => {
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.message || 'Credenciais inválidas');
-            
             const userId = String(data.id).trim();
-            await AsyncStorage.multiSet([
-                ['userToken', data.token],
-                ['username', data.username],
-                ['userId', userId]
-            ]);
-            
+            await AsyncStorage.multiSet([['userToken', data.token], ['username', data.username], ['userId', userId]]);
             setUser({ token: data.token, username: data.username, id: userId });
             const pToken = await registerForPushNotificationsAsync();
             if (pToken) setExpoPushToken(pToken);
@@ -149,7 +167,8 @@ export const GameProvider = ({ children }) => {
         setUser(null);
         setRoom(null);
         setExpoPushToken('');
-        await AsyncStorage.multiRemove(['userToken', 'username', 'userId', '@room_history']);
+        // Removido o @room_history do multiRemove para manter as salas recentes mesmo após deslogar (comportamento padrão de apps)
+        await AsyncStorage.multiRemove(['userToken', 'username', 'userId']);
     };
 
     // ==========================
@@ -157,7 +176,7 @@ export const GameProvider = ({ children }) => {
     // ==========================
     const leaveRoom = useCallback(() => {
         if (socketRef.current) {
-            socketRef.current.removeAllListeners(); // Limpeza crucial
+            socketRef.current.removeAllListeners();
             socketRef.current.disconnect();
             socketRef.current = null;
         }
@@ -171,62 +190,50 @@ export const GameProvider = ({ children }) => {
     const connectToRoom = (roomCode) => {
         return new Promise(async (resolve, reject) => {
             if (!user?.token || !roomCode) return reject(new Error("Sessão inválida"));
-            
             const code = roomCode.trim().toUpperCase();
-            leaveRoom(); // Garante que não há conexão pendente
-
+            leaveRoom();
             const newSocket = io(BASE_URL, {
                 auth: { token: user.token },
                 transports: ['websocket'],
                 reconnection: true
             });
-
             socketRef.current = newSocket;
             setSocket(newSocket);
-
             const timer = setTimeout(() => {
                 if (!newSocket.connected) {
                     newSocket.disconnect();
                     reject(new Error("Servidor ocupado. Tente novamente."));
                 }
             }, 8000);
-
-            // Listeners
             newSocket.on('connect', () => {
                 newSocket.emit('join_room', { roomCode: code, userId: user.id });
             });
-
             newSocket.on('room_joined', (data) => {
                 clearTimeout(timer);
                 const roomInfo = { id: data.roomId, name: data.roomName, code: data.roomCode };
                 setRoom(roomInfo);
                 resolve(roomInfo);
             });
-
-            newSocket.on('update_list', (list) => setCharacters(list));
-
+            newSocket.on('update_list', (list) => {
+                setCharacters(list.map(char => ({
+                    ...char,
+                    img: getFullImageUrl(char.img)
+                })));
+            });
             newSocket.on('receive_message', (msg) => {
-                setMessages(prev => {
-                    if (prev.some(m => compareIds(m._id, msg._id))) return prev;
-                    return [...prev, msg];
-                });
+                setMessages(prev => (prev.some(m => compareIds(m._id, msg._id)) ? prev : [...prev, msg]));
                 if (!compareIds(msg.senderId, user?.id)) triggerMessageFeedback(msg);
             });
-
             newSocket.on('message_deleted', (id) => {
                 setMessages(prev => prev.map(m => compareIds(m._id, id) ? { ...m, text: "🚫 Mensagem apagada", deleted: true } : m));
             });
-
             newSocket.on('chat_history', (h) => setMessages(h));
-
             newSocket.on('display_typing', (data) => {
                 setTypingUsers(prev => prev.some(u => compareIds(u.id, data.id)) ? prev : [...prev, data]);
             });
-
             newSocket.on('hide_typing', (data) => {
                 setTypingUsers(prev => prev.filter(u => !compareIds(u.id, data.id)));
             });
-
             newSocket.on('connect_error', (err) => {
                 clearTimeout(timer);
                 reject(err);
@@ -239,8 +246,6 @@ export const GameProvider = ({ children }) => {
     // ==========================
     const sendMessage = (text, replyTo = null, isEpisode = false) => {
         if (!socketRef.current || !text.trim()) return;
-        const activeChar = characters.find(c => compareIds(c.owner, user.id) && c.active);
-        
         socketRef.current.emit('send_message', {
             text: text.trim(),
             replyTo: replyTo ? { text: replyTo.text, senderName: replyTo.characterName || replyTo.senderName } : null,
@@ -250,10 +255,19 @@ export const GameProvider = ({ children }) => {
 
     const sendEpisode = (num) => num && sendMessage(num.toString(), null, true);
 
+    const rollDice = (sides, bonus = 0) => {
+        if (!socketRef.current) return;
+        const activeChar = characters.find(c => compareIds(c.owner, user.id) && c.active);
+        socketRef.current.emit('roll_dice', {
+            sides: parseInt(sides),
+            bonus: parseInt(bonus),
+            characterName: activeChar ? activeChar.name : user.username
+        });
+    };
+
     const sendTypingStatus = (isTyping) => {
         if (!socketRef.current || lastTypingStatus.current === isTyping) return;
         lastTypingStatus.current = isTyping;
-        
         const activeChar = characters.find(c => compareIds(c.owner, user.id) && c.active);
         socketRef.current.emit(isTyping ? 'typing' : 'stop_typing', { 
             id: user.id,
@@ -264,18 +278,38 @@ export const GameProvider = ({ children }) => {
     const claimCharacter = (id) => socketRef.current?.emit('claim_character', id);
     const releaseCharacter = (id) => socketRef.current?.emit('release_character', id);
     const deleteCharacter = (id) => socketRef.current?.emit('delete_character', id);
-    const createCharacter = (data) => socketRef.current?.emit('create_character', data);
+    
+    const createCharacter = async (data) => {
+        if (!socketRef.current) return;
+        const tempId = `temp-${Date.now()}`;
+        const optimisticChar = {
+            _id: tempId,
+            name: data.name,
+            img: data.img,
+            active: false,
+            owner: null,
+            isOptimistic: true 
+        };
+        setCharacters(prev => [...prev, optimisticChar]);
+        try {
+            const processedImg = await processLocalImage(data.img);
+            socketRef.current.emit('create_character', {
+                ...data,
+                img: processedImg || "https://via.placeholder.com/150"
+            });
+        } catch (err) {
+            console.error("Erro no createCharacter:", err);
+        }
+    };
     
     const updateCharacter = async (id, data) => {
         if (!socketRef.current) return;
-        let payload = { charId: id, ...data };
         try {
-            if (data.img?.startsWith('file://') || data.img?.startsWith('content://')) {
-                const base64 = await FileSystem.readAsStringAsync(data.img, { encoding: 'base64' });
-                payload.img = `data:image/jpeg;base64,${base64}`;
-            }
-        } catch (e) {}
-        socketRef.current.emit('update_character', payload);
+            const processedImg = await processLocalImage(data.img);
+            socketRef.current.emit('update_character', { charId: id, ...data, img: processedImg });
+        } catch (err) {
+            socketRef.current.emit('update_character', { charId: id, ...data });
+        }
     };
 
     return (
@@ -284,9 +318,9 @@ export const GameProvider = ({ children }) => {
                 method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u, password: p })
             }).then(r => r.ok), 
             logout, connectToRoom, leaveRoom, room, characters, messages, sendMessage, sendEpisode,
-            claimCharacter, releaseCharacter, deleteCharacter, createCharacter, updateCharacter,
+            rollDice, claimCharacter, releaseCharacter, deleteCharacter, createCharacter, updateCharacter,
             typingUsers, sendTypingStatus, BASE_URL, customAlert, showAlert, hideAlert,
-            isChatActive, setIsChatActive, expoPushToken 
+            isChatActive, setIsChatActive, expoPushToken, markAsRead
         }}>
             {children}
         </GameContext.Provider>

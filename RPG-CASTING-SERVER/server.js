@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require("express");
 const http = require("http");
 const cors = require("cors");
@@ -11,49 +12,48 @@ const app = express();
 const server = http.createServer(app);
 
 // ==========================
-// 1. CONFIGURAÇÕES & SEGURANÇA
+// 1. CONFIGURAÇÕES & SEGURANÇA (LIMPO)
 // ==========================
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'jsonwebtoken_secret_key'; 
+const JWT_SECRET = process.env.JWT_SECRET; 
 const MONGODB_URI = process.env.MONGODB_URI;
 
 cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_NAME || "dmdkwgoi", 
-    api_key: process.env.CLOUDINARY_KEY || "685964722873423",       
-    api_secret: process.env.CLOUDINARY_SECRET || "PDbMoEuEePM713_ZF2XMXxEZxIY"    
+    cloud_name: process.env.CLOUDINARY_NAME, 
+    api_key: process.env.CLOUDINARY_KEY,       
+    api_secret: process.env.CLOUDINARY_SECRET    
 });
 
 app.use(cors());
-// Limite de 10mb é o equilíbrio ideal para evitar crash de RAM no servidor
-app.use(express.json({ limit: '10mb' })); 
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// Aumentado o limite para 15mb para suportar uploads de fotos via Base64 sem erro de "Payload Too Large"
+app.use(express.json({ limit: '15mb' })); 
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-/**
- * HELPER: Upload com Compressão Inteligente
- * Reduz o peso da imagem no servidor do Cloudinary antes de gerar o link.
- */
+// HELPER: Upload Cloudinary com compressão agressiva para performance
 const uploadToCloudinary = async (base64Data) => {
     try {
         if (!base64Data || typeof base64Data !== 'string') return null;
         if (base64Data.startsWith('http')) return base64Data;
 
+        console.log("⏳ [Cloudinary] Enviando imagem...");
         const res = await cloudinary.uploader.upload(base64Data, {
             folder: "rpg_characters",
             transformation: [
-                { width: 600, height: 600, crop: "limit" }, // Redimensiona se for gigante
-                { quality: "auto:low" }, // Compressão automática otimizada
-                { fetch_format: "auto" } // Converte para formatos leves como WebP
+                { width: 400, height: 400, crop: "limit" }, // Reduzido para 400px para maior velocidade
+                { quality: "auto:eco" }, // Modo econômico (menor arquivo)
+                { fetch_format: "auto" }
             ]
         });
+        console.log("✅ [Cloudinary] Upload concluído.");
         return res.secure_url;
     } catch (err) {
-        console.error("❌ Erro Cloudinary:", err.message);
+        console.error("❌ [Cloudinary] Erro:", err.message);
         return null; 
     }
 };
 
 // ==========================
-// 2. MODELS (Com Otimização de Busca)
+// 2. MODELS
 // ==========================
 const UserSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true, index: true },
@@ -94,12 +94,12 @@ const Character = mongoose.models.Character || mongoose.model('Character', Chara
 const Message = mongoose.models.Message || mongoose.model('Message', MessageSchema);
 
 // ==========================
-// 3. SOCKET.IO (Estabilidade de Longa Duração)
+// 3. SOCKET.IO (OTIMIZADO)
 // ==========================
 const io = new Server(server, { 
     cors: { origin: "*" },
-    pingTimeout: 60000, // Dá mais tempo para uploads em internet oscilante
-    maxHttpBufferSize: 1e7 // Limite de 10mb para pacotes socket
+    pingTimeout: 30000, // Detecta desconexão mais rápido (30s)
+    maxHttpBufferSize: 5e6 // 5MB de buffer máximo para evitar lentidão no tráfego
 });
 
 io.use(async (socket, next) => {
@@ -125,12 +125,10 @@ const emitUpdateList = async (roomId, roomCode) => {
 };
 
 io.on("connection", (socket) => {
-
     socket.on("join_room", async (data) => {
         try {
             const cleanCode = data.roomCode?.toUpperCase().trim();
             if (!cleanCode) return;
-
             const room = await Room.findOne({ roomCode: cleanCode }).lean();
             if (!room) return;
             
@@ -140,7 +138,7 @@ io.on("connection", (socket) => {
 
             const [chars, history] = await Promise.all([
                 Character.find({ roomId: socket.currentRoomId }).lean(),
-                Message.find({ roomCode: cleanCode }).sort({ timestamp: -1 }).limit(40).lean()
+                Message.find({ roomCode: cleanCode }).sort({ timestamp: -1 }).limit(30).lean() // Reduzido para 30 mensagens iniciais (mais rápido)
             ]);
             
             socket.emit("room_joined", { 
@@ -155,26 +153,11 @@ io.on("connection", (socket) => {
         } catch (e) { console.error("Join Error:", e); }
     });
 
-    socket.on("update_character", async ({ charId, name, img }) => {
-        try {
-            let updateData = { name };
-            if (img && img.includes('base64')) {
-                const finalImg = await uploadToCloudinary(img);
-                if (finalImg) updateData.img = finalImg;
-            }
-
-            await Character.findByIdAndUpdate(charId, updateData);
-            if (socket.currentRoomId) await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
-        } catch (e) { console.error("Update Char Error:", e); }
-    });
-
     socket.on("send_message", async (data) => {
         if (!socket.currentRoomCode || !data.text) return;
         try {
             const activeChar = await Character.findOne({ 
-                owner: socket.userId, 
-                active: true, 
-                roomId: socket.currentRoomId 
+                owner: socket.userId, active: true, roomId: socket.currentRoomId 
             }, 'name img').lean();
 
             const msg = await Message.create({
@@ -192,11 +175,27 @@ io.on("connection", (socket) => {
         } catch (e) { console.error("Msg Error:", e); }
     });
 
+    socket.on("update_character", async ({ charId, name, img }) => {
+        try {
+            let updateData = { name };
+            if (img) {
+                if (img.includes('base64')) {
+                    const finalImg = await uploadToCloudinary(img);
+                    if (finalImg) updateData.img = finalImg;
+                } else {
+                    updateData.img = img;
+                }
+            }
+            await Character.findByIdAndUpdate(charId, updateData);
+            if (socket.currentRoomId) await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
+        } catch (e) { console.error("Update Char Error:", e); }
+    });
+
     socket.on("create_character", async (charData) => {
         try {
             if (!socket.currentRoomId) return;
             const uploadedImg = await uploadToCloudinary(charData.img);
-
+            
             await Character.create({
                 name: charData.name,
                 img: uploadedImg || "https://via.placeholder.com/150",
@@ -210,10 +209,7 @@ io.on("connection", (socket) => {
 
     socket.on("claim_character", async (charId) => {
         try {
-            await Character.updateMany(
-                { owner: socket.userId, roomId: socket.currentRoomId }, 
-                { active: false }
-            );
+            await Character.updateMany({ owner: socket.userId, roomId: socket.currentRoomId }, { active: false });
             await Character.findByIdAndUpdate(charId, { owner: socket.userId, active: true });
             await emitUpdateList(socket.currentRoomId, socket.currentRoomCode);
         } catch (e) { console.error("Claim Error:", e); }
@@ -245,24 +241,18 @@ io.on("connection", (socket) => {
     });
 
     socket.on("typing", (data) => {
-        if (socket.currentRoomCode) {
-            socket.to(socket.currentRoomCode).emit("display_typing", { id: String(data.id), name: data.name });
-        }
+        if (socket.currentRoomCode) socket.to(socket.currentRoomCode).emit("display_typing", data);
     });
 
     socket.on("stop_typing", (data) => {
-        if (socket.currentRoomCode) {
-            socket.to(socket.currentRoomCode).emit("hide_typing", { id: String(data.id) });
-        }
+        if (socket.currentRoomCode) socket.to(socket.currentRoomCode).emit("hide_typing", data);
     });
-
-    socket.on("disconnect", () => {});
 });
 
 // ==========================
-// 4. APIs REST (Registro/Login)
+// 4. APIs REST
 // ==========================
-app.get('/', (req, res) => res.send("RPG Server Online 🚀 - v2.4.0"));
+app.get('/', (req, res) => res.send("RPG Server Online 🚀"));
 
 app.post('/api/rooms/create', async (req, res) => {
     try {
@@ -301,20 +291,14 @@ app.post('/api/users/login', async (req, res) => {
 // ==========================
 // 5. INICIALIZAÇÃO
 // ==========================
-async function startServer() {
-    try {
-        mongoose.set('strictQuery', false);
-        if (!MONGODB_URI) throw new Error("MONGODB_URI não definida!");
-        await mongoose.connect(MONGODB_URI);
-        console.log("✅ MongoDB Atlas Conectado");
-
-        server.listen(PORT, () => {
-            console.log(`🚀 Servidor Ekaterina v2.4 rodando na porta ${PORT}`);
-        });
-    } catch (err) {
-        console.error("❌ Erro fatal:", err.message);
-        process.exit(1);
-    }
-}
-
-startServer();
+mongoose.connect(MONGODB_URI)
+.then(() => {
+    console.log("✅ MongoDB Atlas Conectado");
+    server.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 Servidor rodando na porta ${PORT}`);
+    });
+})
+.catch(err => {
+    console.error("❌ Erro fatal MongoDB:", err);
+    process.exit(1); // Encerra o processo se não conseguir conectar ao banco essencial
+});

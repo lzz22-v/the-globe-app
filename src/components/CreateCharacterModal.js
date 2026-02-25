@@ -15,7 +15,7 @@ import {
     TouchableWithoutFeedback
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { CameraIcon } from './AppIcons'; // Importando seu ícone SVG
+import { CameraIcon } from './AppIcons'; 
 
 export default function CreateCharacterModal({ visible, onClose, onCreate }) {
     const [name, setName] = useState('');
@@ -32,16 +32,17 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'],
+            mediaTypes: ['images'], // Alterado de mediaTypes: ImagePicker.MediaTypeOptions.Images (para compatibilidade com expo atualizado)
             allowsEditing: true, 
             aspect: [1, 1], 
-            quality: 0.4, 
+            quality: 0.5, // ✅ AUMENTADO para 0.5: 0.2 estava corrompendo imagens grandes
             base64: true, 
         });
 
         if (!result.canceled && result.assets && result.assets[0].base64) {
             setImageUri(result.assets[0].uri);
-            setImageBase64(`data:image/jpeg;base64,${result.assets[0].base64}`);
+            const mimeType = result.assets[0].mimeType || 'image/jpeg';
+            setImageBase64(`data:${mimeType};base64,${result.assets[0].base64}`);
         }
     };
 
@@ -61,7 +62,8 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
             resetForm();
             onClose();
         } catch (error) {
-            Alert.alert("Erro", "Não foi possível criar o personagem. Tente novamente.");
+            console.error("Erro ao criar personagem:", error);
+            Alert.alert("Erro", "Não foi possível criar o personagem. Verifique sua conexão.");
         } finally {
             setLoading(false);
         }
@@ -71,6 +73,7 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
         setName('');
         setImageUri(null);
         setImageBase64(null);
+        setLoading(false);
     };
 
     const handleClose = () => {
@@ -93,6 +96,7 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
                         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
                         style={styles.keyboardView}
                     >
+                        {/* ❌ ERRO CORRIGIDO: Container de view reconstruído para arrumar os botões soltos */}
                         <View style={styles.container}>
                             <Text style={styles.title}>Novo Personagem</Text>
 
@@ -108,9 +112,13 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
                                     <Image source={{ uri: imageUri }} style={styles.previewImage} />
                                 ) : (
                                     <View style={styles.placeholderBox}>
-                                        {/* Ícone SVG importado do seu AppIcons.js */}
                                         <CameraIcon color="#7048e8" size={40} />
                                         <Text style={styles.placeholderSubText}>Adicionar Foto</Text>
+                                    </View>
+                                )}
+                                {loading && (
+                                    <View style={styles.loadingOverlay}>
+                                        <ActivityIndicator color="#fff" />
                                     </View>
                                 )}
                             </TouchableOpacity>
@@ -122,7 +130,7 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
                                 value={name}
                                 onChangeText={setName}
                                 editable={!loading}
-                                maxLength={30}
+                                maxLength={25}
                             />
 
                             <View style={styles.buttons}>
@@ -134,10 +142,11 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
                                     <Text style={styles.cancelText}>Cancelar</Text>
                                 </TouchableOpacity>
                                 
+                                {/* ✅ CORREÇÃO NO CONDICIONAL DO TEXTO DO BOTÃO */}
                                 <TouchableOpacity 
                                     style={[
                                         styles.confirm, 
-                                        (!name.trim() || !imageBase64) && styles.btnDisabled
+                                        (!name.trim() || !imageBase64 || loading) && styles.btnDisabled
                                     ]} 
                                     onPress={handleCreate}
                                     disabled={loading || !name.trim() || !imageBase64}
@@ -145,7 +154,7 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
                                     {loading ? (
                                         <ActivityIndicator color="white" />
                                     ) : (
-                                        <Text style={styles.btnText}>CRIAR</Text>
+                                        <Text style={styles.btnText}>CRIAR AGORA</Text>
                                     )}
                                 </TouchableOpacity>
                             </View>
@@ -160,7 +169,7 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
 const styles = StyleSheet.create({
     overlay: { 
         flex: 1, 
-        backgroundColor: 'rgba(0,0,0,0.85)', 
+        backgroundColor: 'rgba(0,0,0,0.9)', 
         justifyContent: 'center', 
         padding: 25 
     },
@@ -175,7 +184,8 @@ const styles = StyleSheet.create({
         borderWidth: 1, 
         borderColor: '#333', 
         alignItems: 'center',
-        width: '100%'
+        width: '100%',
+        elevation: 5
     },
     title: { 
         color: 'white', 
@@ -194,7 +204,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center', 
         alignItems: 'center', 
         marginBottom: 25, 
-        overflow: 'hidden' 
+        overflow: 'hidden',
+        position: 'relative'
     },
     previewImage: { 
         width: '100%', 
@@ -208,6 +219,12 @@ const styles = StyleSheet.create({
         fontSize: 11, 
         marginTop: 8, 
         fontWeight: 'bold' 
+    },
+    loadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center'
     },
     input: { 
         backgroundColor: '#000', 
@@ -243,8 +260,8 @@ const styles = StyleSheet.create({
         borderRadius: 15 
     },
     btnDisabled: { 
-        backgroundColor: '#333', 
-        opacity: 0.5 
+        backgroundColor: '#222', 
+        opacity: 0.6 
     },
     btnText: { 
         color: 'white', 

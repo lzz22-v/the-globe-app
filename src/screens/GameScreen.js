@@ -1,11 +1,10 @@
-import React, { useState, useRef, useContext, useEffect } from 'react';
+import React, { useState, useRef, useContext, useEffect, useMemo } from 'react';
 import { 
     View, Text, FlatList, StyleSheet, 
     TextInput, TouchableOpacity, KeyboardAvoidingView, 
     Platform, StatusBar, Vibration,
     ToastAndroid, BackHandler, Modal
 } from 'react-native';
-// Utilizando expo-image para melhor performance de cache e renderização
 import { Image } from 'expo-image'; 
 import * as Clipboard from 'expo-clipboard';
 import * as ImagePicker from 'expo-image-picker'; 
@@ -24,8 +23,8 @@ export default function GameScreen({ navigation }) {
         claimCharacter, releaseCharacter,
         createCharacter, deleteCharacter, updateCharacter,
         typingUsers, sendTypingStatus,
-        deleteMessage, markAsRead, leaveRoom, 
-        customAlert, showAlert, hideAlert,
+        deleteMessage, markAsRead, 
+        customAlert, hideAlert,
         setIsChatActive 
     } = useContext(GameContext);
 
@@ -48,17 +47,20 @@ export default function GameScreen({ navigation }) {
     const typingTimeoutRef = useRef(null);
     const inputRef = useRef(null);
 
-    const currentUserId = String(user?.id || user?._id || '').trim();
+    const currentUserId = useMemo(() => String(user?.id || user?._id || '').trim(), [user]);
     const PLACEHOLDER_IMG = 'https://via.placeholder.com/150/1a1a1a/7048e8?text=RPG';
 
-    // Ciclo de vida: Ativa/Desativa chat e monitora sala
+    // Ciclo de vida
     useEffect(() => {
         setIsChatActive(true);
         if (!room) navigation.replace('RoomSelect');
-        return () => setIsChatActive(false);
+        return () => {
+            setIsChatActive(false);
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        };
     }, [room]);
 
-    // Hardware Back Handler
+    // Hardware Back
     useEffect(() => {
         const backAction = () => {
             navigation.navigate('RoomSelect');
@@ -66,36 +68,36 @@ export default function GameScreen({ navigation }) {
         };
         const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
         return () => backHandler.remove();
-    }, []);
+    }, [navigation]);
 
-    // Marcação de leitura automática
+    // Marcação de leitura automática (Corrigido para usar a nova markAsRead)
     useEffect(() => {
         if (messages.length > 0) {
             const lastMsg = messages[messages.length - 1];
             const isFromMe = String(lastMsg.senderId).trim() === currentUserId;
-            if (lastMsg?._id && !isFromMe && !lastMsg.isRead) {
+            // Só chama se a função existir e a mensagem for de outro usuário
+            if (markAsRead && lastMsg?._id && !isFromMe && !lastMsg.isRead) {
                 markAsRead(lastMsg._id);
             }
         }
-    }, [messages, currentUserId]);
+    }, [messages, currentUserId, markAsRead]);
 
     const handlePickImage = async () => {
         try {
             const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
             if (!permission.granted) {
-                showAlert("Permissão", "Precisamos de acesso à galeria.", "info");
+                if (Platform.OS === 'android') ToastAndroid.show("Permissão necessária", ToastAndroid.SHORT);
                 return;
             }
             const result = await ImagePicker.launchImageLibraryAsync({
-                mediaTypes: ['images'],
+                mediaTypes: ImagePicker.MediaTypeOptions.Images,
                 allowsEditing: true,
                 aspect: [1, 1],
                 quality: 0.5,
                 base64: true 
             });
             if (!result.canceled && result.assets?.length > 0) {
-                const base64 = `data:image/jpeg;base64,${result.assets[0].base64}`;
-                setEditImg(base64);
+                setEditImg(`data:image/jpeg;base64,${result.assets[0].base64}`);
             }
         } catch (error) {
             console.log("Erro ao abrir galeria:", error);
@@ -112,11 +114,7 @@ export default function GameScreen({ navigation }) {
         if (code) {
             await Clipboard.setStringAsync(code);
             Vibration.vibrate(50);
-            if (Platform.OS === 'android') {
-                ToastAndroid.show("Código copiado!", ToastAndroid.SHORT);
-            } else {
-                showAlert("Copiado", "Código da sala copiado!", "info");
-            }
+            if (Platform.OS === 'android') ToastAndroid.show("Código copiado!", ToastAndroid.SHORT);
         }
     };
 
@@ -163,14 +161,11 @@ export default function GameScreen({ navigation }) {
     };
 
     const handleSaveEdit = () => {
-        if (!editName.trim()) return showAlert("Erro", "O nome não pode estar vazio", "error");
-        updateCharacter(charToEdit._id, { 
-            name: editName.trim(), 
-            img: editImg 
-        });
+        if (!editName.trim()) return; 
+        updateCharacter(charToEdit._id, { name: editName.trim(), img: editImg });
         setEditModalVisible(false);
         setCharToEdit(null);
-        if (Platform.OS === 'android') ToastAndroid.show("Atualizando personagem...", ToastAndroid.SHORT);
+        if (Platform.OS === 'android') ToastAndroid.show("Personagem atualizado!", ToastAndroid.SHORT);
     };
 
     const handleLongPressMessage = (item) => {

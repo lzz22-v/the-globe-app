@@ -37,6 +37,25 @@ export default function RoomSelectScreen() {
         }, [])
     );
 
+    // Função para atualizar o histórico no AsyncStorage
+    const updateRoomHistory = async (roomData) => {
+        try {
+            const saved = await AsyncStorage.getItem('@room_history');
+            let currentHistory = saved ? JSON.parse(saved) : [];
+
+            // Remove a sala se ela já existir para reordená-la no topo
+            currentHistory = currentHistory.filter(item => item.code !== roomData.code);
+
+            // Adiciona a nova sala no início e limita a 5 registros
+            const newHistory = [roomData, ...currentHistory].slice(0, 5);
+
+            setHistory(newHistory);
+            await AsyncStorage.setItem('@room_history', JSON.stringify(newHistory));
+        } catch (e) {
+            console.error("Erro ao salvar histórico:", e);
+        }
+    };
+
     // Função Unificada com bloqueio de reentrância
     const handleConnectAndNavigate = async (code, type) => {
         if (localLoading) return;
@@ -53,7 +72,17 @@ export default function RoomSelectScreen() {
         Vibration.vibrate(50);
         
         try {
-            await connectToRoom(upperCode);
+            // A função connectToRoom retorna o roomInfo em caso de sucesso
+            const roomData = await connectToRoom(upperCode);
+            
+            // Salva no histórico se a conexão for bem sucedida
+            if (roomData && roomData.code) {
+                await updateRoomHistory({
+                    name: roomData.name || roomData.roomName,
+                    code: roomData.code
+                });
+            }
+
             navigation.navigate('Game');
         } catch (err) {
             showAlert("Conexão Falhou", err.message || "Não foi possível conectar.", "error");
@@ -88,6 +117,7 @@ export default function RoomSelectScreen() {
             if (!response.ok) throw new Error(data.message || 'Erro ao criar sala.');
 
             setNewRoomName('');
+            // handleConnectAndNavigate agora lida com a conexão e o histórico
             await handleConnectAndNavigate(data.roomCode, 'create');
         } catch (err) {
             showAlert("Erro", err.message, 'error');

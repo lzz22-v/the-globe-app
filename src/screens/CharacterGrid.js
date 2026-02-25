@@ -9,47 +9,57 @@ import { View, Text, FlatList, StyleSheet, Image, TouchableOpacity } from 'react
  */
 export default function CharacterGrid({ characters, socket, myUserId }) {
     
-    // Certifica-se de que characters é um array (embora GameScreen já faça isso)
+    // Certifica-se de que characters é um array
     const data = Array.isArray(characters) ? characters : [];
 
     const handlePress = (char) => {
-        // Lógica de interação com o personagem (ex: abrir ficha, focar, etc.)
+        // Lógica de interação: aqui você pode disparar o claim ou abrir detalhes
         console.log(`Interagindo com: ${char.name}`);
-        // Exemplo: socket.emit('interact_character', { characterId: char.id });
     };
 
     const renderCharacter = ({ item }) => {
-        // ✅ CORREÇÃO CRÍTICA: Evita o erro se o array 'characters' contiver 'null' ou 'undefined'
         if (!item) return null; 
 
-        // Garante que os valores a serem exibidos sejam strings seguras
+        // ✅ CORREÇÃO: Alinhando com o GameContext (item.img em vez de imageUrl)
         const safeName = String(item.name || 'Sem Nome');
-        const safeStatus = String(item.status || 'Offline');
-        const safeImageUrl = item.imageUrl ? String(item.imageUrl) : 'https://via.placeholder.com/150';
+        
+        // No seu sistema, se o personagem tem um owner, ele está "Ocupado/Online"
+        const isClaimed = !!item.owner;
+        const safeStatus = isClaimed ? 'Ocupado' : 'Livre';
+        
+        // ✅ CORREÇÃO: Usa a propriedade 'img' que já vem processada pelo Context
+        const safeImageUrl = item.img ? String(item.img) : 'https://via.placeholder.com/150/1a1a1a/7048e8?text=?';
 
-        const isMe = item.userId === myUserId;
-        const statusColor = safeStatus === 'Online' ? '#4CAF50' : '#FF9800';
+        // ✅ CORREÇÃO: Verifica o dono usando 'owner' (campo do banco/socket)
+        const isMe = String(item.owner) === String(myUserId);
+        const statusColor = isClaimed ? '#FF9800' : '#4CAF50';
 
         return (
             <TouchableOpacity 
                 style={[styles.card, isMe && styles.myCard]} 
                 onPress={() => handlePress(item)}
             >
-                <Image 
-                    style={styles.image} 
-                    source={{ uri: safeImageUrl }} 
-                    resizeMode="cover" 
-                />
+                <View style={styles.imageContainer}>
+                    <Image 
+                        style={[styles.image, !isClaimed && { opacity: 0.7 }]} 
+                        source={{ uri: safeImageUrl }} 
+                        resizeMode="cover" 
+                    />
+                </View>
+
                 <View style={styles.info}>
-                    {/* ✅ CORREÇÃO APLICADA: Garante string para o nome */}
-                    <Text style={styles.name}>{safeName}</Text>
+                    <Text style={styles.name} numberOfLines={1}>{safeName}</Text>
                     <View style={styles.statusBadge}>
                         <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-                        {/* ✅ CORREÇÃO APLICADA: Garante string para o status */}
                         <Text style={styles.statusText}>{safeStatus}</Text>
                     </View>
                 </View>
-                {isMe && <Text style={styles.meBadge}>Você</Text>}
+
+                {isMe && (
+                    <View style={styles.meBadge}>
+                        <Text style={styles.meBadgeText}>VOCÊ</Text>
+                    </View>
+                )}
             </TouchableOpacity>
         );
     };
@@ -58,13 +68,12 @@ export default function CharacterGrid({ characters, socket, myUserId }) {
         <FlatList
             data={data}
             renderItem={renderCharacter}
-            keyExtractor={(item, index) => String(item?.id || index)}
-            numColumns={3} // Exemplo de 3 colunas
+            keyExtractor={(item, index) => String(item?._id || item?.id || index)}
+            numColumns={3}
             contentContainerStyle={styles.grid}
-            // Garante que o FlatList não tente renderizar nada se estiver vazio
             ListEmptyComponent={() => (
                 <View style={styles.emptyContainer}>
-                    <Text style={styles.emptyText}>Nenhum personagem encontrado.</Text>
+                    <Text style={styles.emptyText}>Nenhum personagem na sala.</Text>
                 </View>
             )}
         />
@@ -72,38 +81,43 @@ export default function CharacterGrid({ characters, socket, myUserId }) {
 }
 
 const styles = StyleSheet.create({
-    // ... (Seus estilos existentes)
     grid: {
-        padding: 5,
-        justifyContent: 'center',
+        padding: 10,
     },
     card: {
         flex: 1,
         margin: 5,
-        backgroundColor: '#2d2d2d',
-        borderRadius: 10,
+        backgroundColor: '#1a1a1a', // Escurecido para combinar com o tema
+        borderRadius: 15,
         overflow: 'hidden',
         alignItems: 'center',
-        paddingBottom: 8,
-        position: 'relative',
+        paddingBottom: 10,
+        borderWidth: 1,
+        borderColor: '#333',
+        maxWidth: '31%', // Garante 3 colunas limpas
     },
     myCard: {
-        borderWidth: 2,
         borderColor: '#7048e8',
+        backgroundColor: '#1e1b2e',
+    },
+    imageContainer: {
+        width: '100%',
+        height: 100,
+        backgroundColor: '#000',
     },
     image: {
         width: '100%',
-        height: 100,
-        backgroundColor: '#444',
+        height: '100%',
     },
     info: {
         paddingTop: 8,
         alignItems: 'center',
+        paddingHorizontal: 5,
     },
     name: {
         color: '#fff',
         fontWeight: 'bold',
-        fontSize: 14,
+        fontSize: 12,
         textAlign: 'center',
     },
     statusBadge: {
@@ -112,35 +126,36 @@ const styles = StyleSheet.create({
         marginTop: 4,
     },
     statusDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
         marginRight: 4,
     },
     statusText: {
-        color: '#ccc',
-        fontSize: 12,
+        color: '#aaa',
+        fontSize: 10,
+        fontWeight: 'bold',
     },
     meBadge: {
         position: 'absolute',
         top: 5,
         right: 5,
         backgroundColor: '#7048e8',
-        color: 'white',
-        fontSize: 10,
-        fontWeight: 'bold',
         paddingHorizontal: 6,
         paddingVertical: 2,
-        borderRadius: 5,
+        borderRadius: 4,
+    },
+    meBadgeText: {
+        color: 'white',
+        fontSize: 8,
+        fontWeight: 'black',
     },
     emptyContainer: {
-        flex: 1,
+        marginTop: 50,
         alignItems: 'center',
-        justifyContent: 'center',
-        height: 100,
     },
     emptyText: {
-        color: '#ccc',
-        fontSize: 16,
+        color: '#666',
+        fontSize: 14,
     }
 });
