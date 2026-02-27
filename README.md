@@ -6,7 +6,7 @@ O **theGlobe** é uma plataforma mobile para entusiastas de RPG de mesa que busc
 
 A atualização **Ekaterina** traz melhorias significativas de persistência, UX e segurança.
 
-> ### 📥 [BAIXAR THEGLOBE APK v2.2.3](https://github.com/lzz22-v/the-globe-app/releases/download/v2.2.3/theGlobe.apk)
+> ### 📥 [BAIXAR THEGLOBE APK v2.2.3](https://github.com/lzz22-v/the-globe-app/releases/tag/v2.2.3)
 > *Nota: Por ser um APK independente, o Android pode solicitar permissão para "Instalar de Fontes Desconhecidas".*
 
 ---
