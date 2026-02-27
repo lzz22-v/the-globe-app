@@ -23,7 +23,7 @@ export default function GameScreen({ navigation }) {
         claimCharacter, releaseCharacter,
         createCharacter, deleteCharacter, updateCharacter,
         typingUsers, sendTypingStatus,
-        deleteMessage, markAsRead, 
+        deleteMessage, // Verifique se este nome está igual no seu GameContext.js
         customAlert, hideAlert,
         setIsChatActive 
     } = useContext(GameContext);
@@ -50,7 +50,9 @@ export default function GameScreen({ navigation }) {
     const currentUserId = useMemo(() => String(user?.id || user?._id || '').trim(), [user]);
     const PLACEHOLDER_IMG = 'https://via.placeholder.com/150/1a1a1a/7048e8?text=RPG';
 
-    // Ciclo de vida
+    // Memoriza as mensagens invertidas para performance
+    const memoizedMessages = useMemo(() => [...messages].reverse(), [messages]);
+
     useEffect(() => {
         setIsChatActive(true);
         if (!room) navigation.replace('RoomSelect');
@@ -60,7 +62,6 @@ export default function GameScreen({ navigation }) {
         };
     }, [room]);
 
-    // Hardware Back
     useEffect(() => {
         const backAction = () => {
             navigation.navigate('RoomSelect');
@@ -69,18 +70,6 @@ export default function GameScreen({ navigation }) {
         const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
         return () => backHandler.remove();
     }, [navigation]);
-
-    // Marcação de leitura automática (Corrigido para usar a nova markAsRead)
-    useEffect(() => {
-        if (messages.length > 0) {
-            const lastMsg = messages[messages.length - 1];
-            const isFromMe = String(lastMsg.senderId).trim() === currentUserId;
-            // Só chama se a função existir e a mensagem for de outro usuário
-            if (markAsRead && lastMsg?._id && !isFromMe && !lastMsg.isRead) {
-                markAsRead(lastMsg._id);
-            }
-        }
-    }, [messages, currentUserId, markAsRead]);
 
     const handlePickImage = async () => {
         try {
@@ -176,7 +165,7 @@ export default function GameScreen({ navigation }) {
     };
 
     const renderTypingIndicator = () => {
-        const othersTyping = typingUsers.filter(u => String(u.id).trim() !== currentUserId);
+        const othersTyping = typingUsers.filter(u => String(u.id || u._id).trim() !== currentUserId);
         if (othersTyping.length === 0) return null;
         return (
             <View style={styles.typingContainer}>
@@ -235,6 +224,7 @@ export default function GameScreen({ navigation }) {
         const isMyMessage = String(item.senderId).trim() === currentUserId;
         const hasChar = item.characterName && item.characterImg;
         const isReply = item.replyTo && item.replyTo.text;
+        const isRead = item.isRead === true;
 
         if (item.isEpisode) {
             return (
@@ -299,8 +289,8 @@ export default function GameScreen({ navigation }) {
                     <Text style={styles.msgText}>{item.text}</Text>
 
                     {isMyMessage && (
-                        <Text style={styles.readCheck}>
-                            {item.isRead === true ? '✓✓' : '✓'}
+                        <Text style={[styles.readCheck, isRead && { color: '#00e5ff', opacity: 1 }]}>
+                            {isRead ? '✓✓' : '✓'}
                         </Text>
                     )}
                 </TouchableOpacity>
@@ -347,11 +337,12 @@ export default function GameScreen({ navigation }) {
                 <View style={{ flex: 1 }}>
                     <FlatList 
                         ref={flatListRef}
-                        data={[...messages].reverse()} 
+                        data={memoizedMessages} 
                         inverted 
                         keyExtractor={(item, index) => item._id?.toString() || index.toString()}
                         renderItem={renderMessage}
                         contentContainerStyle={{ padding: 15 }}
+                        extraData={messages}
                     />
                     
                     {renderTypingIndicator()}
@@ -401,7 +392,7 @@ export default function GameScreen({ navigation }) {
                 </View>
             </KeyboardAvoidingView>
 
-            {/* Modais de Interface */}
+            {/* MODAL EPISÓDIO */}
             <Modal visible={epModalVisible} transparent animationType="slide">
                 <View style={styles.modalOverlay}>
                     <View style={styles.editModalBox}>
@@ -428,6 +419,7 @@ export default function GameScreen({ navigation }) {
                 </View>
             </Modal>
 
+            {/* MODAL EDITAR PERSONAGEM */}
             <Modal
                 visible={editModalVisible}
                 transparent
@@ -478,7 +470,9 @@ export default function GameScreen({ navigation }) {
                     setTimeout(() => inputRef.current?.focus(), 200);
                 }}
                 onDelete={() => {
-                    deleteMessage(messageToManage._id);
+                    if (deleteMessage) {
+                        deleteMessage(messageToManage._id);
+                    }
                     setMenuVisible(false);
                 }}
             />
@@ -547,7 +541,8 @@ const styles = StyleSheet.create({
     msgNoCharSpacer: { width: 10 },
     msgBox: { padding: 12, borderRadius: 18, maxWidth: '75%', minWidth: 100 },
     myMsg: { alignSelf: 'flex-end', backgroundColor: '#7048e8', borderBottomRightRadius: 4 },
-    otherMsg: { alignSelf: 'flex-start', backgroundColor: '#2a2a2a', borderBottomLeftRadius: 4 },
+    otherMsg: { alignSelf: 'flex-start', backgroundColor: 
+    /*balão do segundo usuário*/'#4e4e4e', borderBottomLeftRadius: 4 },
     deletedMsg: { backgroundColor: '#1a1a1a', borderStyle: 'dashed', borderWidth: 1, borderColor: '#333' },
     deletedMsgText: { color: '#555', fontSize: 13, fontStyle: 'italic' },
     msgSender: { color: '#bbb', fontSize: 10, marginBottom: 4, fontWeight: 'bold' },

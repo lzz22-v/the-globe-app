@@ -32,10 +32,10 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
         }
 
         const result = await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ['images'], // Alterado de mediaTypes: ImagePicker.MediaTypeOptions.Images (para compatibilidade com expo atualizado)
+            mediaTypes: ['images'], 
             allowsEditing: true, 
             aspect: [1, 1], 
-            quality: 0.5, // ✅ AUMENTADO para 0.5: 0.2 estava corrompendo imagens grandes
+            quality: 0.5, 
             base64: true, 
         });
 
@@ -91,76 +91,75 @@ export default function CreateCharacterModal({ visible, onClose, onCreate }) {
             onRequestClose={handleClose}
         >
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
-                <View style={styles.overlay}>
-                    <KeyboardAvoidingView 
-                        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-                        style={styles.keyboardView}
-                    >
-                        {/* ❌ ERRO CORRIGIDO: Container de view reconstruído para arrumar os botões soltos */}
-                        <View style={styles.container}>
-                            <Text style={styles.title}>Novo Personagem</Text>
+                {/* O KeyboardAvoidingView agora envolve todo o conteúdo interno do Modal.
+                   O segredo está no behavior e no flex: 1.
+                */}
+                <KeyboardAvoidingView 
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                    style={styles.overlay}
+                >
+                    <View style={styles.container}>
+                        <Text style={styles.title}>Novo Personagem</Text>
 
+                        <TouchableOpacity 
+                            style={[
+                                styles.imageSelector, 
+                                imageUri && { borderStyle: 'solid' }
+                            ]} 
+                            onPress={pickImage} 
+                            disabled={loading}
+                        >
+                            {imageUri ? (
+                                <Image source={{ uri: imageUri }} style={styles.previewImage} />
+                            ) : (
+                                <View style={styles.placeholderBox}>
+                                    <CameraIcon color="#7048e8" size={40} />
+                                    <Text style={styles.placeholderSubText}>Adicionar Foto</Text>
+                                </View>
+                            )}
+                            {loading && (
+                                <View style={styles.loadingOverlay}>
+                                    <ActivityIndicator color="#fff" />
+                                </View>
+                            )}
+                        </TouchableOpacity>
+
+                        <TextInput 
+                            style={styles.input} 
+                            placeholder="Nome do Personagem" 
+                            placeholderTextColor="#666"
+                            value={name}
+                            onChangeText={setName}
+                            editable={!loading}
+                            maxLength={25}
+                        />
+
+                        <View style={styles.buttons}>
                             <TouchableOpacity 
-                                style={[
-                                    styles.imageSelector, 
-                                    imageUri && { borderStyle: 'solid' }
-                                ]} 
-                                onPress={pickImage} 
+                                style={styles.cancel} 
+                                onPress={handleClose} 
                                 disabled={loading}
                             >
-                                {imageUri ? (
-                                    <Image source={{ uri: imageUri }} style={styles.previewImage} />
+                                <Text style={styles.cancelText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            
+                            <TouchableOpacity 
+                                style={[
+                                    styles.confirm, 
+                                    (!name.trim() || !imageBase64 || loading) && styles.btnDisabled
+                                ]} 
+                                onPress={handleCreate}
+                                disabled={loading || !name.trim() || !imageBase64}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator color="white" />
                                 ) : (
-                                    <View style={styles.placeholderBox}>
-                                        <CameraIcon color="#7048e8" size={40} />
-                                        <Text style={styles.placeholderSubText}>Adicionar Foto</Text>
-                                    </View>
-                                )}
-                                {loading && (
-                                    <View style={styles.loadingOverlay}>
-                                        <ActivityIndicator color="#fff" />
-                                    </View>
+                                    <Text style={styles.btnText}>CRIAR AGORA</Text>
                                 )}
                             </TouchableOpacity>
-
-                            <TextInput 
-                                style={styles.input} 
-                                placeholder="Nome do Personagem" 
-                                placeholderTextColor="#666"
-                                value={name}
-                                onChangeText={setName}
-                                editable={!loading}
-                                maxLength={25}
-                            />
-
-                            <View style={styles.buttons}>
-                                <TouchableOpacity 
-                                    style={styles.cancel} 
-                                    onPress={handleClose} 
-                                    disabled={loading}
-                                >
-                                    <Text style={styles.cancelText}>Cancelar</Text>
-                                </TouchableOpacity>
-                                
-                                {/* ✅ CORREÇÃO NO CONDICIONAL DO TEXTO DO BOTÃO */}
-                                <TouchableOpacity 
-                                    style={[
-                                        styles.confirm, 
-                                        (!name.trim() || !imageBase64 || loading) && styles.btnDisabled
-                                    ]} 
-                                    onPress={handleCreate}
-                                    disabled={loading || !name.trim() || !imageBase64}
-                                >
-                                    {loading ? (
-                                        <ActivityIndicator color="white" />
-                                    ) : (
-                                        <Text style={styles.btnText}>CRIAR AGORA</Text>
-                                    )}
-                                </TouchableOpacity>
-                            </View>
                         </View>
-                    </KeyboardAvoidingView>
-                </View>
+                    </View>
+                </KeyboardAvoidingView>
             </TouchableWithoutFeedback>
         </Modal>
     );
@@ -170,12 +169,8 @@ const styles = StyleSheet.create({
     overlay: { 
         flex: 1, 
         backgroundColor: 'rgba(0,0,0,0.9)', 
-        justifyContent: 'center', 
+        justifyContent: 'center', // Centraliza o container quando o teclado está fechado
         padding: 25 
-    },
-    keyboardView: {
-        width: '100%',
-        alignItems: 'center',
     },
     container: { 
         backgroundColor: '#1a1a1a', 

@@ -39,15 +39,7 @@ export default function MessageOptionsModal({ visible, onClose, onReply, onDelet
                         <Text style={styles.optionText}>Responder</Text>
                     </TouchableOpacity>
 
-                    {/* BLOQUEAR USUÁRIO (Sempre visível para moderação ou apenas para outros) */}
-                    {!isMyMessage && (
-                        <TouchableOpacity style={styles.option} onPress={onBlock}>
-                            <View style={styles.iconWrapper}>
-                                <BlockIcon color="#ff9800" />
-                            </View>
-                            <Text style={[styles.optionText, { color: '#ff9800' }]}>Bloquear Usuário</Text>
-                        </TouchableOpacity>
-                    )}
+                    
 
                     {/* EXCLUIR MENSAGEM */}
                     {isMyMessage && (

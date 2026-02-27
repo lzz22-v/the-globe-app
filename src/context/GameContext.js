@@ -117,12 +117,13 @@ export const GameProvider = ({ children }) => {
     const showAlert = (title, message, type = 'info') => setCustomAlert({ visible: true, title, message, type });
     const hideAlert = () => setCustomAlert(prev => ({ ...prev, visible: false }));
 
-    // ==========================
-    // FUNÇÕES DE UTILIDADE
-    // ==========================
     const markAsRead = useCallback(() => {
         Notifications.dismissAllNotificationsAsync();
-    }, []);
+        // Avisar o servidor que as mensagens foram lidas
+        if (socketRef.current && room) {
+            socketRef.current.emit('mark_as_read', { roomCode: room.code, userId: user.id });
+        }
+    }, [room, user]);
 
     // ==========================
     // AUTH LÓGICA
@@ -167,7 +168,6 @@ export const GameProvider = ({ children }) => {
         setUser(null);
         setRoom(null);
         setExpoPushToken('');
-        // Removido o @room_history do multiRemove para manter as salas recentes mesmo após deslogar (comportamento padrão de apps)
         await AsyncStorage.multiRemove(['userToken', 'username', 'userId']);
     };
 
@@ -205,35 +205,49 @@ export const GameProvider = ({ children }) => {
                     reject(new Error("Servidor ocupado. Tente novamente."));
                 }
             }, 8000);
+
             newSocket.on('connect', () => {
                 newSocket.emit('join_room', { roomCode: code, userId: user.id });
             });
+
             newSocket.on('room_joined', (data) => {
                 clearTimeout(timer);
                 const roomInfo = { id: data.roomId, name: data.roomName, code: data.roomCode };
                 setRoom(roomInfo);
                 resolve(roomInfo);
             });
+
             newSocket.on('update_list', (list) => {
                 setCharacters(list.map(char => ({
                     ...char,
                     img: getFullImageUrl(char.img)
                 })));
             });
+
             newSocket.on('receive_message', (msg) => {
                 setMessages(prev => (prev.some(m => compareIds(m._id, msg._id)) ? prev : [...prev, msg]));
                 if (!compareIds(msg.senderId, user?.id)) triggerMessageFeedback(msg);
             });
+
             newSocket.on('message_deleted', (id) => {
                 setMessages(prev => prev.map(m => compareIds(m._id, id) ? { ...m, text: "🚫 Mensagem apagada", deleted: true } : m));
             });
+
+            // --- ADICIONADO: OUvinte de Leitura ---
+            newSocket.on('messages_marked_read', ({ userId }) => {
+                setMessages(prev => prev.map(m => (!compareIds(m.senderId, userId) ? { ...m, isRead: true } : m)));
+            });
+
             newSocket.on('chat_history', (h) => setMessages(h));
+
             newSocket.on('display_typing', (data) => {
                 setTypingUsers(prev => prev.some(u => compareIds(u.id, data.id)) ? prev : [...prev, data]);
             });
+
             newSocket.on('hide_typing', (data) => {
                 setTypingUsers(prev => prev.filter(u => !compareIds(u.id, data.id)));
             });
+
             newSocket.on('connect_error', (err) => {
                 clearTimeout(timer);
                 reject(err);
@@ -251,6 +265,11 @@ export const GameProvider = ({ children }) => {
             replyTo: replyTo ? { text: replyTo.text, senderName: replyTo.characterName || replyTo.senderName } : null,
             isEpisode
         });
+    };
+
+    const deleteMessage = (messageId) => {
+        if (!socketRef.current) return;
+        socketRef.current.emit('delete_message', messageId);
     };
 
     const sendEpisode = (num) => num && sendMessage(num.toString(), null, true);
@@ -320,7 +339,8 @@ export const GameProvider = ({ children }) => {
             logout, connectToRoom, leaveRoom, room, characters, messages, sendMessage, sendEpisode,
             rollDice, claimCharacter, releaseCharacter, deleteCharacter, createCharacter, updateCharacter,
             typingUsers, sendTypingStatus, BASE_URL, customAlert, showAlert, hideAlert,
-            isChatActive, setIsChatActive, expoPushToken, markAsRead
+            isChatActive, setIsChatActive, expoPushToken, markAsRead,
+            deleteMessage 
         }}>
             {children}
         </GameContext.Provider>
